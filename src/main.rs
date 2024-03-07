@@ -1,26 +1,16 @@
+mod utility;
+use utility::*;
+
 use std::net::SocketAddr;
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::{Body, Bytes, Frame};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{StatusCode};
+use hyper::StatusCode;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
-
-// We create some utility functions to make Empty and Full bodies
-// fit our broadened Response body type.
-fn empty() -> BoxBody<Bytes, hyper::Error> {
-    Empty::<Bytes>::new()
-        .map_err(|never| match never {})
-        .boxed()
-}
-fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
-    Full::new(chunk.into())
-        .map_err(|never| match never {})
-        .boxed()
-}
 
 async fn echo(
     req: Request<hyper::body::Incoming>,
