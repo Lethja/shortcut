@@ -4,7 +4,7 @@ use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::{Body, Bytes, Frame};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Method, StatusCode};
+use hyper::{StatusCode};
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
@@ -25,11 +25,12 @@ fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
 async fn echo(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    match (req.method(), req.uri().path()) {
-        (&Method::GET, "/") => Ok(Response::new(full("Try POSTing data to /echo"))),
-        (&Method::POST, "/") => Ok(Response::new(full("Try POSTing data to /echo"))),
-        (&Method::POST, "/echo") => Ok(Response::new(req.into_body().boxed())),
-        (&Method::POST, "/echo/uppercase") => {
+    match (req.method().as_str(), req.uri().path()) {
+        ("FOO", "/") => Ok(Response::new(full("Bar"))),
+        ("GET", "/") => Ok(Response::new(full("Try POSTing data to /echo"))),
+        ("POST", "/") => Ok(Response::new(full("Try POSTing data to /echo"))),
+        ("POST", "/echo") => Ok(Response::new(req.into_body().boxed())),
+        ("POST", "/echo/uppercase") => {
             // Map this body's frame to a different type
             let frame_stream = req.into_body().map_frame(|frame| {
                 let frame = if let Ok(data) = frame.into_data() {
@@ -46,7 +47,7 @@ async fn echo(
 
             Ok(Response::new(frame_stream.boxed()))
         }
-        (&Method::POST, "/echo/reversed") => {
+        ("POST", "/echo/reversed") => {
             // Protect our server from massive bodies.
             let upper = req.body().size_hint().upper().unwrap_or(u64::MAX);
             if upper > 1024 * 64 {
