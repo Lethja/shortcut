@@ -3,8 +3,8 @@ use utility::*;
 
 use std::net::SocketAddr;
 
-use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-use hyper::body::{Body, Bytes, Frame};
+use http_body_util::combinators::BoxBody;
+use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::StatusCode;
@@ -12,53 +12,32 @@ use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-async fn echo(
+async fn serve_cache(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    match (req.method().as_str(), req.uri().path()) {
-        ("FOO", "/") => Ok(Response::new(full("Bar"))),
-        ("GET", "/") => Ok(Response::new(full("Try POSTing data to /echo"))),
-        ("POST", "/") => Ok(Response::new(full("Try POSTing data to /echo"))),
-        ("POST", "/echo") => Ok(Response::new(req.into_body().boxed())),
-        ("POST", "/echo/uppercase") => {
-            // Map this body's frame to a different type
-            let frame_stream = req.into_body().map_frame(|frame| {
-                let frame = if let Ok(data) = frame.into_data() {
-                    // Convert every byte in every Data frame to uppercase
-                    data.iter()
-                        .map(|byte| byte.to_ascii_uppercase())
-                        .collect::<Bytes>()
-                } else {
-                    Bytes::new()
-                };
+    /* TODO: Connect to the remote HTTP(s) address if one is specified */
+    println!("({}){}", req.uri().scheme_str().unwrap_or_default(), req.uri().to_string());
 
-                Frame::data(frame)
-            });
+    let mut tbd = Response::new(empty());
+    *tbd.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+    Ok(tbd)
+}
 
-            Ok(Response::new(frame_stream.boxed()))
-        }
-        ("POST", "/echo/reversed") => {
-            // Protect our server from massive bodies.
-            let upper = req.body().size_hint().upper().unwrap_or(u64::MAX);
-            if upper > 1024 * 64 {
-                let mut resp = Response::new(full("Body too big"));
-                *resp.status_mut() = StatusCode::PAYLOAD_TOO_LARGE;
-                return Ok(resp);
-            }
+async fn serve(
+    req: Request<hyper::body::Incoming>,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    match req.method().as_str().to_uppercase().as_str() {
+        "CACHE" => serve_cache(req).await,
+        "GET" => serve_cache(req).await,
+        "OPTIONS" => {
+            let mut options = Response::new(empty());
+            options.headers_mut().append("Allow", "CACHE, GET, HEAD".parse().unwrap());
+            Ok(options)
+        },
 
-            // Await the whole body to be collected into a single `Bytes`...
-            let whole_body = req.collect().await?.to_bytes();
-
-            // Iterate the whole body in reverse order and collect into a new Vec.
-            let reversed_body = whole_body.iter().rev().cloned().collect::<Vec<u8>>();
-
-            Ok(Response::new(full(reversed_body)))
-        }
-
-        // Return 404 Not Found for other routes.
         _ => {
             let mut not_found = Response::new(empty());
-            *not_found.status_mut() = StatusCode::NOT_FOUND;
+            *not_found.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
             Ok(not_found)
         }
     }
@@ -81,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             // Finally, we bind the incoming connection to our `hello` service
             if let Err(err) = http1::Builder::new()
                 // `service_fn` converts our function in a `Service`
-                .serve_connection(io, service_fn(echo))
+                .serve_connection(io, service_fn(serve))
                 .await
             {
                 println!("Error serving connection: {:?}", err);
