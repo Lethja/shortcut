@@ -412,6 +412,8 @@ dependencies = [
 name = "rproxy"
 version = "0.0.0"
 dependencies = [
+ "bytes",
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",
