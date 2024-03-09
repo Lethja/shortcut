@@ -1,4 +1,4 @@
-use crate::utility::{build_sender, empty, full, host_addr, tunnel};
+use crate::utility::{build_sender, default_port, empty, full, host_addr, tunnel};
 use bytes::Bytes;
 use http::{Method, Request, Response, StatusCode};
 use http_body_util::combinators::BoxBody;
@@ -10,6 +10,28 @@ pub async fn request(
     println!("req: {:?}", req);
 
     match req.method().to_string().to_uppercase().as_str() {
+        "CACHE" => {
+            let host = match req.uri().host() {
+                Some(x) => x,
+                None => {
+                    let mut resp = Response::new(empty());
+                    *resp.status_mut() = StatusCode::BAD_REQUEST;
+
+                    return Ok(resp);
+                }
+            };
+
+            let scheme = req.uri().scheme_str().unwrap_or("HTTP");
+            let port = req.uri().port_u16().unwrap_or(default_port(scheme));
+
+            let sender = build_sender(host, port).await;
+
+            let mut req = req;
+            *req.method_mut() = Method::GET;
+
+            let resp = sender?.send_request(req).await?;
+            Ok(resp.map(|b| b.boxed()))
+        }
         "CONNECT" => {
             if let Some(addr) = host_addr(req.uri()) {
                 tokio::task::spawn(async move {
@@ -32,27 +54,6 @@ pub async fn request(
                 Ok(resp)
             }
         }
-        "CACHE" => {
-            let host = match req.uri().host() {
-                Some(x) => x,
-                None => {
-                    let mut resp = Response::new(empty());
-                    *resp.status_mut() = StatusCode::BAD_REQUEST;
-
-                    return Ok(resp);
-                }
-            };
-
-            let port = req.uri().port_u16().unwrap_or(80);
-
-            let sender = build_sender(host, port).await;
-
-            let mut req = req;
-            *req.method_mut() = Method::GET;
-
-            let resp = sender?.send_request(req).await?;
-            Ok(resp.map(|b| b.boxed()))
-        }
         "GET" => {
             let host = match req.uri().host() {
                 Some(x) => x,
@@ -65,7 +66,8 @@ pub async fn request(
                 }
             };
 
-            let port = req.uri().port_u16().unwrap_or(80);
+            let scheme = req.uri().scheme_str().unwrap_or("HTTP");
+            let port = req.uri().port_u16().unwrap_or(default_port(scheme));
 
             let sender = build_sender(host, port).await;
             let resp = sender?.send_request(req).await?;

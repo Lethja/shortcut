@@ -7,6 +7,13 @@ use hyper::{
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
+pub fn default_port(scheme: &str) -> u16 {
+    match scheme {
+        "HTTPS" => 443,
+        _ => 80,
+    }
+}
+
 pub fn empty() -> BoxBody<Bytes, hyper::Error> {
     Empty::<Bytes>::new()
         .map_err(|never| match never {})
