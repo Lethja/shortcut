@@ -1,8 +1,7 @@
-use crate::utility::{build_sender, default_port, empty, full, host_addr, tunnel};
+use crate::utility::*;
 use bytes::Bytes;
 use http::{Method, Request, Response, StatusCode};
 use http_body_util::combinators::BoxBody;
-use http_body_util::BodyExt;
 
 pub async fn request(
     req: Request<hyper::body::Incoming>,
@@ -27,10 +26,10 @@ pub async fn request(
             let sender = build_sender(host, port).await;
 
             let mut req = req;
-            *req.method_mut() = Method::GET;
+            *req.method_mut() = Method::HEAD;
 
             let resp = sender?.send_request(req).await?;
-            Ok(resp.map(|b| b.boxed()))
+            cache(resp)
         }
         "CONNECT" => {
             if let Some(addr) = host_addr(req.uri()) {
@@ -70,8 +69,12 @@ pub async fn request(
             let port = req.uri().port_u16().unwrap_or(default_port(scheme));
 
             let sender = build_sender(host, port).await;
+
+            let mut req = req;
+            *req.method_mut() = Method::HEAD;
+
             let resp = sender?.send_request(req).await?;
-            Ok(resp.map(|b| b.boxed()))
+            cache(resp)
         }
         "OPTIONS" => {
             let mut options = Response::new(empty());

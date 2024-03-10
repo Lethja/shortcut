@@ -1,3 +1,4 @@
+use http::Response;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
     body::{Bytes, Incoming},
@@ -6,6 +7,14 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+
+pub fn cache(
+    res: Response<Incoming>,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    /* TODO: Handle reading the file */
+    /* TODO: Handle writing the file */
+    Ok(res.map(|b| b.boxed()))
+}
 
 pub fn default_port(scheme: &str) -> u16 {
     match scheme {
