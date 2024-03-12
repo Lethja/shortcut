@@ -1,4 +1,4 @@
-use http::Response;
+use http::{Response, StatusCode};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
     body::{Bytes, Incoming},
@@ -7,6 +7,22 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+
+pub fn react_bad_request() -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    let mut resp = Response::new(empty());
+    *resp.status_mut() = StatusCode::BAD_REQUEST;
+
+    return Ok(resp);
+}
+
+pub fn react_bad_request_msg(
+    message: Bytes,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    let mut resp = Response::new(full(message));
+    *resp.status_mut() = StatusCode::BAD_REQUEST;
+
+    return Ok(resp);
+}
 
 pub fn cache(
     res: Response<Incoming>,

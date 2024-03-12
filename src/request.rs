@@ -11,13 +11,8 @@ pub async fn request(
     match req.method().to_string().to_uppercase().as_str() {
         "CACHE" => {
             let host = match req.uri().host() {
+                None => return react_bad_request(),
                 Some(x) => x,
-                None => {
-                    let mut resp = Response::new(empty());
-                    *resp.status_mut() = StatusCode::BAD_REQUEST;
-
-                    return Ok(resp);
-                }
             };
 
             let scheme = req.uri().scheme_str().unwrap_or("HTTP");
@@ -46,23 +41,18 @@ pub async fn request(
 
                 Ok(Response::new(empty()))
             } else {
-                eprintln!("CONNECT host is not socket addr: {:?}", req.uri());
-                let mut resp = Response::new(full("CONNECT must be to a socket address"));
-                *resp.status_mut() = StatusCode::BAD_REQUEST;
-
-                Ok(resp)
+                react_bad_request_msg("CONNECT must be to a socket address\n".into())
             }
         }
         "GET" => {
             let host = match req.uri().host() {
-                Some(x) => x,
                 None => {
-                    let mut resp = Response::new(full(
-                        "Use this address in the 'http_proxy' environment variable instead\n",
-                    ));
-                    *resp.status_mut() = StatusCode::OK;
-                    return Ok(resp);
+                    return react_bad_request_msg(
+                        "Use this address in the 'http_proxy' environment variable instead\n"
+                            .into(),
+                    )
                 }
+                Some(x) => x,
             };
 
             let scheme = req.uri().scheme_str().unwrap_or("HTTP");
