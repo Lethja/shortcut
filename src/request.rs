@@ -1,7 +1,7 @@
 use crate::utility::*;
 use bytes::Bytes;
-use http::{Method, Request, Response, StatusCode};
-use http_body_util::combinators::BoxBody;
+use http::{Request, Response, StatusCode};
+use http_body_util::{combinators::BoxBody, BodyExt};
 
 pub async fn request(
     req: Request<hyper::body::Incoming>,
@@ -18,13 +18,13 @@ pub async fn request(
             let scheme = req.uri().scheme_str().unwrap_or("HTTP");
             let port = req.uri().port_u16().unwrap_or(default_port(scheme));
 
-            let sender = build_sender(host, port).await;
+            let sender = match build_sender(host, port).await {
+                Ok(x) => x,
+                Err(_) => return react_bad_request(),
+            };
 
-            let mut req = req;
-            *req.method_mut() = Method::HEAD;
-
-            let resp = sender?.send_request(req).await?;
-            cache(resp)
+            let res = meta_lookup(req, sender).await?;
+            Ok(res.map(|b| b.boxed()))
         }
         "CONNECT" => {
             if let Some(addr) = host_addr(req.uri()) {
@@ -58,13 +58,13 @@ pub async fn request(
             let scheme = req.uri().scheme_str().unwrap_or("HTTP");
             let port = req.uri().port_u16().unwrap_or(default_port(scheme));
 
-            let sender = build_sender(host, port).await;
+            let sender = match build_sender(host, port).await {
+                Ok(x) => x,
+                Err(_) => return react_bad_request(),
+            };
 
-            let mut req = req;
-            *req.method_mut() = Method::HEAD;
-
-            let resp = sender?.send_request(req).await?;
-            cache(resp)
+            let res = meta_lookup(req, sender).await?;
+            Ok(res.map(|b| b.boxed()))
         }
         "OPTIONS" => {
             let mut options = Response::new(empty());

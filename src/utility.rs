@@ -1,4 +1,4 @@
-use http::{Response, StatusCode};
+use http::{Method, Request, Response, StatusCode};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
     body::{Bytes, Incoming},
@@ -24,12 +24,18 @@ pub fn react_bad_request_msg(
     return Ok(resp);
 }
 
-pub fn cache(
-    res: Response<Incoming>,
-) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    /* TODO: Handle reading the file */
-    /* TODO: Handle writing the file */
-    Ok(res.map(|b| b.boxed()))
+pub async fn meta_lookup(
+    res: Request<Incoming>,
+    mut sender: SendRequest<Incoming>,
+) -> Result<Response<Incoming>, hyper::Error> {
+    let mut req = res;
+    /* Determine if cached data is stale, convert request method to HEAD */
+    *req.method_mut() = Method::HEAD;
+    /* TODO: Make the uri relative before sending (not all servers act well to absolute addresses) */
+    /* TODO: Check if the file is already on the disk, serve it directly if it's not stale or check against metadata if it is*/
+    let res = sender.send_request(req).await;
+    /* TODO: Unwrap and compare head data to that in a local database to decide what do to next */
+    res /* TODO: temporary return, this function should end the HEAD stage with a conclusion on what the caller has to do next */
 }
 
 pub fn default_port(scheme: &str) -> u16 {
