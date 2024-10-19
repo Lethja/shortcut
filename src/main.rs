@@ -1,3 +1,4 @@
+use std::env::args;
 use bytes::Bytes;
 use http::{header::ALLOW, StatusCode};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -8,8 +9,9 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
-use std::path::Path;
-use tokio::io::AsyncReadExt;
+use std::path::{Path, PathBuf};
+use std::process;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::{
     fs::File,
     net::{TcpListener, TcpStream},
@@ -17,10 +19,13 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8100));
+    let content_path = get_content_path();
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3142));
 
     let listener = TcpListener::bind(addr).await?;
-    println!("Listening on http://{}", addr);
+    println!("Content path {}", content_path.to_str().unwrap());
+    println!("Listening on {}", addr.port());
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -38,6 +43,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+}
+
+fn get_content_path() -> PathBuf {
+    let path_str = args().nth(1).unwrap_or(String::from("."));
+
+    let path = match Path::new(path_str.as_str()).canonicalize() {
+        Ok(p) => {p.to_path_buf()}
+        Err(_) => {
+            eprintln!("Can't resolve path directory");
+            process::exit(1);
+        }
+    };
+
+    if !path.is_dir() {
+        eprintln!("Can't set content path to {:?}", path);
+        process::exit(1);
+    }
+    path
 }
 
 fn internal_error() -> Response<BoxBody<Bytes, Error>> {
@@ -124,17 +147,32 @@ async fn proxy(
                                 .unwrap();
                             return Ok(response);
                         } else {
-                            //TODO: write a file
-                            /*
-                            let file = match File::create(cache_str).await {
+                            let mut file = match File::create(cache_str).await {
                                 Ok(f) => f,
                                 Err(_) => {
                                     return Ok(internal_error());
                                 }
                             };
-                            */
 
-                            let resp = send_request(req).await?;
+                            let mut resp = match send_request(req).await {
+                                Ok(r) => r,
+                                Err(_) => {
+                                    return Ok(internal_error());
+                                }
+                            };
+
+                            while let Some(next) = resp.frame().await {
+                                let frame = next?;
+                                if let Some(chunk) = frame.data_ref() {
+                                    match file.write_all(&chunk).await {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            println!("{}", e);
+                                            return Ok(internal_error());
+                                        }
+                                    }
+                                }
+                            }
 
                             return Ok(resp.map(|b| b.boxed()));
                         }
