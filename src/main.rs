@@ -127,18 +127,15 @@ async fn send_request(req: Request<Incoming>) -> Result<Response<Incoming>, Erro
 
 fn try_get_request_file_name(req: &Request<Incoming>) -> Option<String> {
     use http::header::CONTENT_DISPOSITION;
-    use regex::Regex;
 
     if let Ok(name) = req.headers().get(CONTENT_DISPOSITION)?.to_str() {
-        let re = Regex::new(r#"filename=(?:"([^"]+)"|([^;]+))"#).unwrap();
-
-        if let Some(captures) = re.captures(name) {
-            if let Some(r) = captures
-                .get(1)
-                .or_else(|| captures.get(2))
-                .map(|m| m.as_str().to_string())
-            {
-                return Some(r);
+        for part in name.split(';').map(str::trim) {
+            if part.starts_with("filename=") {
+                let file_name = part.split_at("filename=".len()).1.trim_matches('"');
+                return Some(file_name.to_string());
+            } else if part.starts_with("filename*=") {
+                let file_name = part.split_at("filename*=".len()).1.trim_matches('"');
+                return Some(file_name.to_string());
             }
         }
     }
@@ -149,12 +146,12 @@ fn try_get_request_file_name(req: &Request<Incoming>) -> Option<String> {
         return Some(name.to_string());
     }
 
-    let re = Regex::new(r"/([^/]+\.[a-zA-Z0-9]+)$").unwrap();
-    if let Some(captures) = re.captures(req.uri().path()) {
-        if let Some(r) = captures.get(1).map(|m| m.as_str()) {
-            return Some(r.to_string());
+    req.uri().path().rsplit('/').next().and_then(|segment| {
+        if segment.contains('.') {
+            return Some(segment);
         }
-    }
+        None
+    });
 
     None
 }
