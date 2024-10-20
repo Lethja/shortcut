@@ -1,19 +1,23 @@
 use bytes::Bytes;
-use http::header::{CONTENT_RANGE, RANGE};
-use http::{header::ALLOW, StatusCode};
+use http::{
+    header::{ALLOW, CONTENT_RANGE, RANGE},
+    StatusCode,
+};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::{
     body::Incoming, client::conn::http1::Builder, server::conn::http1, service::service_fn,
     upgrade::Upgraded, Error, Method, Request, Response,
 };
 use hyper_util::rt::TokioIo;
-use std::env::args;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::process;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use std::{
+    env::args,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process,
+};
 use tokio::{
     fs::File,
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 
@@ -49,14 +53,14 @@ fn parse_range_header(range_header: &str, file_size: u64) -> Option<(u64, u64)> 
     if let Some(range_str) = range_header.strip_prefix("bytes=") {
         if let Some((start_str, end_str)) = range_str.split_once('-') {
             let start = if start_str.is_empty() {
-                // If start_str is empty, it means the start is unspecified (suffix range)
+                /* If start_str is empty, it means the start is unspecified (suffix range) */
                 0
             } else {
                 start_str.parse::<u64>().ok()?
             };
 
             let end = if end_str.is_empty() {
-                // If end_str is empty, it means the end is unspecified (prefix range)
+                /* If end_str is empty, it means the end is unspecified (prefix range) */
                 file_size - 1
             } else {
                 end_str.parse::<u64>().ok()?
@@ -126,8 +130,8 @@ async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>
 
     const X_UNIQUE_CACHE_NAME: &str = "x-unique-cache-name";
 
-    match req.method() {
-        &Method::CONNECT => {
+    match *req.method() {
+        Method::CONNECT => {
             if let Some(addr) = host_addr(req.uri()) {
                 tokio::task::spawn(async move {
                     match hyper::upgrade::on(req).await {
@@ -149,7 +153,7 @@ async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>
                 Ok(resp)
             }
         }
-        &Method::GET => {
+        Method::GET => {
             if let Some(cache_name) = req.headers().get(X_UNIQUE_CACHE_NAME) {
                 match cache_name.to_str() {
                     Ok(cache_str) => {
@@ -162,35 +166,32 @@ async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>
                                 }
                             };
 
-                            match req.headers().get(RANGE) {
-                                Some(r) => {
-                                    let meta = match file.metadata().await {
-                                        Ok(m) => m,
-                                        Err(_) => {
-                                            return Ok(internal_error());
-                                        }
-                                    };
-
-                                    if let Some((start, end)) =
-                                        parse_range_header(r.to_str().unwrap(), meta.len())
-                                    {
-                                        let mut buffer = vec![0; (end - start + 1) as usize];
-
-                                        file.seek(tokio::io::SeekFrom::Start(start)).await.unwrap();
-                                        file.read_exact(&mut buffer[..]).await.unwrap();
-
-                                        return Ok(Response::builder()
-                                            .status(StatusCode::PARTIAL_CONTENT)
-                                            .header(
-                                                CONTENT_RANGE,
-                                                format!("bytes {}-{}/{}", start, end, meta.len())
-                                                    .as_bytes(),
-                                            )
-                                            .body(full(buffer))
-                                            .unwrap());
+                            if let Some(r) = req.headers().get(RANGE) {
+                                let meta = match file.metadata().await {
+                                    Ok(m) => m,
+                                    Err(_) => {
+                                        return Ok(internal_error());
                                     }
+                                };
+
+                                if let Some((start, end)) =
+                                    parse_range_header(r.to_str().unwrap(), meta.len())
+                                {
+                                    let mut buffer = vec![0; (end - start + 1) as usize];
+
+                                    file.seek(tokio::io::SeekFrom::Start(start)).await.unwrap();
+                                    file.read_exact(&mut buffer[..]).await.unwrap();
+
+                                    return Ok(Response::builder()
+                                        .status(StatusCode::PARTIAL_CONTENT)
+                                        .header(
+                                            CONTENT_RANGE,
+                                            format!("bytes {}-{}/{}", start, end, meta.len())
+                                                .as_bytes(),
+                                        )
+                                        .body(full(buffer))
+                                        .unwrap());
                                 }
-                                None => {}
                             }
 
                             let mut contents = Vec::new();
@@ -203,7 +204,7 @@ async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>
                             Ok(response)
                         } else {
                             /* Remove content range as the proxy needs to cache the file */
-                            let mut req = Request::from(req);
+                            let mut req = req;
                             req.headers_mut().remove(CONTENT_RANGE);
 
                             let mut file = match File::create(file_path).await {
@@ -223,7 +224,7 @@ async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>
                             while let Some(next) = resp.frame().await {
                                 let frame = next?;
                                 if let Some(chunk) = frame.data_ref() {
-                                    match file.write_all(&chunk).await {
+                                    match file.write_all(chunk).await {
                                         Ok(_) => {}
                                         Err(e) => {
                                             println!("{}", e);
@@ -255,7 +256,7 @@ async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>
 }
 
 fn host_addr(uri: &http::Uri) -> Option<String> {
-    uri.authority().and_then(|auth| Some(auth.to_string()))
+    uri.authority().map(|auth| auth.to_string())
 }
 
 fn empty() -> BoxBody<Bytes, Error> {
