@@ -16,7 +16,7 @@ use std::{
     process,
 };
 use tokio::{
-    fs::{create_dir_all, File},
+    fs::{create_dir_all, remove_file, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
@@ -193,13 +193,17 @@ async fn try_get_request_file_name(req: &Request<Incoming>) -> Option<PathBuf> {
         if let Ok(mut file) = File::create(&full_path).await {
             return match file.write_all(b"").await {
                 Ok(_) => {
-                    None
+                    drop(file);
+                    return match remove_file(&full_path).await {
+                        Ok(_) => Some(full_path),
+                        Err(_) => None,
+                    };
                 }
                 Err(e) => {
                     eprintln!("{}: '{}'", e, full_path.to_str().unwrap_or(UNKNOWN_PATH));
                     None
                 }
-            }
+            };
         }
     }
 
