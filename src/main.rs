@@ -125,10 +125,42 @@ async fn send_request(req: Request<Incoming>) -> Result<Response<Incoming>, Erro
     Ok(resp)
 }
 
-async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>, Error> {
-    println!("req: {:?}", req);
+fn try_get_request_file_name(req: &Request<Incoming>) -> Option<String> {
+    use http::header::CONTENT_DISPOSITION;
+    use regex::Regex;
+
+    if let Ok(name) = req.headers().get(CONTENT_DISPOSITION)?.to_str() {
+        let re = Regex::new(r#"filename=(?:"([^"]+)"|([^;]+))"#).unwrap();
+
+        if let Some(captures) = re.captures(name) {
+            if let Some(r) = captures
+                .get(1)
+                .or_else(|| captures.get(2))
+                .map(|m| m.as_str().to_string())
+            {
+                return Some(r);
+            }
+        }
+    }
 
     const X_UNIQUE_CACHE_NAME: &str = "x-unique-cache-name";
+
+    if let Ok(name) = req.headers().get(X_UNIQUE_CACHE_NAME)?.to_str() {
+        return Some(name.to_string());
+    }
+
+    let re = Regex::new(r"/([^/]+\.[a-zA-Z0-9]+)$").unwrap();
+    if let Some(captures) = re.captures(req.uri().path()) {
+        if let Some(r) = captures.get(1).map(|m| m.as_str()) {
+            return Some(r.to_string());
+        }
+    }
+
+    None
+}
+
+async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>, Error> {
+    println!("req: {:?}", req);
 
     match *req.method() {
         Method::CONNECT => {
@@ -154,91 +186,85 @@ async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>
             }
         }
         Method::GET => {
-            if let Some(cache_name) = req.headers().get(X_UNIQUE_CACHE_NAME) {
-                match cache_name.to_str() {
-                    Ok(cache_str) => {
-                        let file_path = get_content_path().join(cache_str);
-                        return if file_path.is_file() {
-                            let mut file = match File::open(file_path).await {
-                                Ok(file) => file,
-                                Err(_) => {
-                                    return Ok(internal_error());
-                                }
-                            };
+            if let Some(cache_name) = try_get_request_file_name(&req) {
+                let file_path = get_content_path().join(cache_name);
+                return if file_path.is_file() {
+                    let mut file = match File::open(file_path).await {
+                        Ok(file) => file,
+                        Err(_) => {
+                            return Ok(internal_error());
+                        }
+                    };
 
-                            if let Some(r) = req.headers().get(RANGE) {
-                                let meta = match file.metadata().await {
-                                    Ok(m) => m,
-                                    Err(_) => {
-                                        return Ok(internal_error());
-                                    }
-                                };
-
-                                if let Some((start, end)) =
-                                    parse_range_header(r.to_str().unwrap(), meta.len())
-                                {
-                                    let mut buffer = vec![0; (end - start + 1) as usize];
-
-                                    file.seek(tokio::io::SeekFrom::Start(start)).await.unwrap();
-                                    file.read_exact(&mut buffer[..]).await.unwrap();
-
-                                    return Ok(Response::builder()
-                                        .status(StatusCode::PARTIAL_CONTENT)
-                                        .header(
-                                            CONTENT_RANGE,
-                                            format!("bytes {}-{}/{}", start, end, meta.len())
-                                                .as_bytes(),
-                                        )
-                                        .body(full(buffer))
-                                        .unwrap());
-                                }
+                    if let Some(r) = req.headers().get(RANGE) {
+                        let meta = match file.metadata().await {
+                            Ok(m) => m,
+                            Err(_) => {
+                                return Ok(internal_error());
                             }
-
-                            let mut contents = Vec::new();
-                            file.read_to_end(&mut contents).await.unwrap();
-
-                            let response = hyper::Response::builder()
-                                .status(StatusCode::OK)
-                                .body(full(contents))
-                                .unwrap();
-                            Ok(response)
-                        } else {
-                            /* Remove content range as the proxy needs to cache the file */
-                            let mut req = req;
-                            req.headers_mut().remove(CONTENT_RANGE);
-
-                            let mut file = match File::create(file_path).await {
-                                Ok(f) => f,
-                                Err(_) => {
-                                    return Ok(internal_error());
-                                }
-                            };
-
-                            let mut resp = match send_request(req).await {
-                                Ok(r) => r,
-                                Err(_) => {
-                                    return Ok(internal_error());
-                                }
-                            };
-
-                            while let Some(next) = resp.frame().await {
-                                let frame = next?;
-                                if let Some(chunk) = frame.data_ref() {
-                                    match file.write_all(chunk).await {
-                                        Ok(_) => {}
-                                        Err(e) => {
-                                            println!("{}", e);
-                                            return Ok(internal_error());
-                                        }
-                                    }
-                                }
-                            }
-
-                            Ok(resp.map(|b| b.boxed()))
                         };
+
+                        if let Some((start, end)) =
+                            parse_range_header(r.to_str().unwrap(), meta.len())
+                        {
+                            let mut buffer = vec![0; (end - start + 1) as usize];
+
+                            file.seek(tokio::io::SeekFrom::Start(start)).await.unwrap();
+                            file.read_exact(&mut buffer[..]).await.unwrap();
+
+                            return Ok(Response::builder()
+                                .status(StatusCode::PARTIAL_CONTENT)
+                                .header(
+                                    CONTENT_RANGE,
+                                    format!("bytes {}-{}/{}", start, end, meta.len()).as_bytes(),
+                                )
+                                .body(full(buffer))
+                                .unwrap());
+                        }
                     }
-                    Err(e) => println!("Failed to convert cache name to str: {:?}", e),
-                }
+
+                    let mut contents = Vec::new();
+                    file.read_to_end(&mut contents).await.unwrap();
+
+                    let response = hyper::Response::builder()
+                        .status(StatusCode::OK)
+                        .body(full(contents))
+                        .unwrap();
+                    Ok(response)
+                } else {
+                    /* Remove content range as the proxy needs to cache the file */
+                    let mut req = req;
+                    req.headers_mut().remove(CONTENT_RANGE);
+
+                    let mut file = match File::create(file_path).await {
+                        Ok(f) => f,
+                        Err(_) => {
+                            return Ok(internal_error());
+                        }
+                    };
+
+                    let mut resp = match send_request(req).await {
+                        Ok(r) => r,
+                        Err(_) => {
+                            return Ok(internal_error());
+                        }
+                    };
+
+                    while let Some(next) = resp.frame().await {
+                        let frame = next?;
+                        if let Some(chunk) = frame.data_ref() {
+                            match file.write_all(chunk).await {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    println!("{}", e);
+                                    return Ok(internal_error());
+                                }
+                            }
+                        }
+                    }
+
+                    Ok(resp.map(|b| b.boxed()))
+                };
             }
 
             let resp = send_request(req).await?;
