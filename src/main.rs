@@ -2,10 +2,9 @@ use bytes::Bytes;
 use http::header::{CONTENT_RANGE, RANGE};
 use http::{header::ALLOW, StatusCode};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
-use hyper::body::Incoming;
 use hyper::{
-    client::conn::http1::Builder, server::conn::http1, service::service_fn, upgrade::Upgraded,
-    Error, Method, Request, Response,
+    body::Incoming, client::conn::http1::Builder, server::conn::http1, service::service_fn,
+    upgrade::Upgraded, Error, Method, Request, Response,
 };
 use hyper_util::rt::TokioIo;
 use std::env::args;
@@ -96,7 +95,7 @@ fn internal_error() -> Response<BoxBody<Bytes, Error>> {
         .unwrap()
 }
 
-async fn send_request(req: Request<Incoming>) -> Result<Response<Incoming>, hyper::Error> {
+async fn send_request(req: Request<Incoming>) -> Result<Response<Incoming>, Error> {
     let stream = TcpStream::connect((
         req.uri().host().expect("uri has no host"),
         req.uri().port_u16().unwrap_or(80),
@@ -122,9 +121,7 @@ async fn send_request(req: Request<Incoming>) -> Result<Response<Incoming>, hype
     Ok(resp)
 }
 
-async fn proxy(
-    req: Request<hyper::body::Incoming>,
-) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>, Error> {
     println!("req: {:?}", req);
 
     const X_UNIQUE_CACHE_NAME: &str = "x-unique-cache-name";
@@ -237,7 +234,7 @@ async fn proxy(
                             }
 
                             Ok(resp.map(|b| b.boxed()))
-                        }
+                        };
                     }
                     Err(e) => println!("Failed to convert cache name to str: {:?}", e),
                 }
@@ -261,13 +258,13 @@ fn host_addr(uri: &http::Uri) -> Option<String> {
     uri.authority().and_then(|auth| Some(auth.to_string()))
 }
 
-fn empty() -> BoxBody<Bytes, hyper::Error> {
+fn empty() -> BoxBody<Bytes, Error> {
     Empty::<Bytes>::new()
         .map_err(|never| match never {})
         .boxed()
 }
 
-fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
+fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, Error> {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed()
