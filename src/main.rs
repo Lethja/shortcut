@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use http::{
-    header::{ALLOW, CONTENT_RANGE, RANGE},
+    header::{ALLOW, CONTENT_DISPOSITION, CONTENT_RANGE, RANGE},
     StatusCode,
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -126,32 +126,33 @@ async fn send_request(req: Request<Incoming>) -> Result<Response<Incoming>, Erro
 }
 
 fn try_get_request_file_name(req: &Request<Incoming>) -> Option<String> {
-    use http::header::CONTENT_DISPOSITION;
-
-    if let Ok(name) = req.headers().get(CONTENT_DISPOSITION)?.to_str() {
-        for part in name.split(';').map(str::trim) {
-            if part.starts_with("filename=") {
-                let file_name = part.split_at("filename=".len()).1.trim_matches('"');
-                return Some(file_name.to_string());
-            } else if part.starts_with("filename*=") {
-                let file_name = part.split_at("filename*=".len()).1.trim_matches('"');
-                return Some(file_name.to_string());
+    if let Some(name) = req.headers().get(CONTENT_DISPOSITION) {
+        if let Ok(name) = name.to_str() {
+            for part in name.split(';').map(str::trim) {
+                if part.starts_with("filename=") {
+                    let file_name = part.split_at("filename=".len()).1.trim_matches('"');
+                    return Some(file_name.to_string());
+                } else if part.starts_with("filename*=") {
+                    let file_name = part.split_at("filename*=".len()).1.trim_matches('"');
+                    return Some(file_name.to_string());
+                }
             }
         }
     }
 
     const X_UNIQUE_CACHE_NAME: &str = "x-unique-cache-name";
 
-    if let Ok(name) = req.headers().get(X_UNIQUE_CACHE_NAME)?.to_str() {
-        return Some(name.to_string());
+    if let Some(name) = req.headers().get(X_UNIQUE_CACHE_NAME) {
+        if let Ok(name) = name.to_str() {
+            return Some(name.to_string());
+        }
     }
 
-    req.uri().path().rsplit('/').next().and_then(|segment| {
-        if segment.contains('.') {
-            return Some(segment);
+    if let Some(name) = req.uri().path().rsplit('/').next() {
+        if name.contains('.') {
+            return Some(name.to_string())
         }
-        None
-    });
+    }
 
     None
 }
