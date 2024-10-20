@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use http::{
-    header::{ALLOW, CONTENT_DISPOSITION, CONTENT_RANGE, RANGE},
+    header::{ALLOW, CONTENT_DISPOSITION, CONTENT_RANGE, HOST, RANGE},
     StatusCode,
 };
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
@@ -16,7 +16,7 @@ use std::{
     process,
 };
 use tokio::{
-    fs::File,
+    fs::{create_dir_all, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
@@ -125,32 +125,81 @@ async fn send_request(req: Request<Incoming>) -> Result<Response<Incoming>, Erro
     Ok(resp)
 }
 
-fn try_get_request_file_name(req: &Request<Incoming>) -> Option<String> {
+async fn try_get_request_file_name(req: &Request<Incoming>) -> Option<PathBuf> {
+    let mut full_path = get_content_path();
+
+    if let Some(host) = req.headers().get(HOST) {
+        if let Ok(host) = host.to_str() {
+            full_path = full_path.join(host);
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    }
+
+    let mut file_name: Option<String> = None;
+    const X_UNIQUE_CACHE_NAME: &str = "x-unique-cache-name";
+
     if let Some(name) = req.headers().get(CONTENT_DISPOSITION) {
         if let Ok(name) = name.to_str() {
             for part in name.split(';').map(str::trim) {
                 if part.starts_with("filename=") {
-                    let file_name = part.split_at("filename=".len()).1.trim_matches('"');
-                    return Some(file_name.to_string());
+                    file_name = Some(
+                        part.split_at("filename=".len())
+                            .1
+                            .trim_matches('"')
+                            .to_string(),
+                    );
                 } else if part.starts_with("filename*=") {
-                    let file_name = part.split_at("filename*=".len()).1.trim_matches('"');
-                    return Some(file_name.to_string());
+                    file_name = Some(
+                        part.split_at("filename*=".len())
+                            .1
+                            .trim_matches('"')
+                            .to_string(),
+                    );
                 }
             }
         }
-    }
-
-    const X_UNIQUE_CACHE_NAME: &str = "x-unique-cache-name";
-
-    if let Some(name) = req.headers().get(X_UNIQUE_CACHE_NAME) {
+    } else if let Some(name) = req.headers().get(X_UNIQUE_CACHE_NAME) {
         if let Ok(name) = name.to_str() {
-            return Some(name.to_string());
+            file_name = Some(name.to_string());
+        }
+    } else if let Some(name) = req.uri().path().rsplit('/').next() {
+        if name.contains('.') {
+            file_name = Some(name.to_string());
         }
     }
 
-    if let Some(name) = req.uri().path().rsplit('/').next() {
-        if name.contains('.') {
-            return Some(name.to_string())
+    const UNKNOWN_PATH: &str = "Unknown Path";
+
+    if let Some(file_name) = file_name {
+        if !full_path.exists() {
+            match create_dir_all(&full_path).await {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("{}: '{}'", e, full_path.to_str().unwrap_or(UNKNOWN_PATH));
+                    return None;
+                }
+            }
+        }
+
+        full_path = full_path.join(file_name);
+        if full_path.exists() {
+            return Some(full_path);
+        }
+
+        /* There's no cached file, but we must test it can be written to */
+        if let Ok(mut file) = File::create(&full_path).await {
+            return match file.write_all(b"").await {
+                Ok(_) => {
+                    None
+                }
+                Err(e) => {
+                    eprintln!("{}: '{}'", e, full_path.to_str().unwrap_or(UNKNOWN_PATH));
+                    None
+                }
+            }
         }
     }
 
@@ -184,8 +233,7 @@ async fn proxy(req: Request<Incoming>) -> Result<Response<BoxBody<Bytes, Error>>
             }
         }
         Method::GET => {
-            if let Some(cache_name) = try_get_request_file_name(&req) {
-                let file_path = get_content_path().join(cache_name);
+            if let Some(file_path) = try_get_request_file_name(&req).await {
                 return if file_path.is_file() {
                     let mut file = match File::open(file_path).await {
                         Ok(file) => file,
