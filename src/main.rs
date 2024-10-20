@@ -1,5 +1,5 @@
-use std::env::args;
 use bytes::Bytes;
+use http::header::{CONTENT_RANGE, RANGE};
 use http::{header::ALLOW, StatusCode};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::body::Incoming;
@@ -8,10 +8,11 @@ use hyper::{
     Error, Method, Request, Response,
 };
 use hyper_util::rt::TokioIo;
+use std::env::args;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::{
     fs::File,
     net::{TcpListener, TcpStream},
@@ -45,11 +46,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+fn parse_range_header(range_header: &str, file_size: u64) -> Option<(u64, u64)> {
+    if let Some(range_str) = range_header.strip_prefix("bytes=") {
+        if let Some((start_str, end_str)) = range_str.split_once('-') {
+            let start = if start_str.is_empty() {
+                // If start_str is empty, it means the start is unspecified (suffix range)
+                0
+            } else {
+                start_str.parse::<u64>().ok()?
+            };
+
+            let end = if end_str.is_empty() {
+                // If end_str is empty, it means the end is unspecified (prefix range)
+                file_size - 1
+            } else {
+                end_str.parse::<u64>().ok()?
+            };
+
+            if start <= end && end < file_size {
+                return Some((start, end));
+            }
+        }
+    }
+    None
+}
+
 fn get_content_path() -> PathBuf {
     let path_str = args().nth(1).unwrap_or(String::from("."));
 
     let path = match Path::new(path_str.as_str()).canonicalize() {
-        Ok(p) => {p.to_path_buf()}
+        Ok(p) => p.to_path_buf(),
         Err(_) => {
             eprintln!("Can't resolve path directory");
             process::exit(1);
@@ -130,13 +156,45 @@ async fn proxy(
             if let Some(cache_name) = req.headers().get(X_UNIQUE_CACHE_NAME) {
                 match cache_name.to_str() {
                     Ok(cache_str) => {
-                        if Path::new(cache_str).exists() {
-                            let mut file = match File::open(cache_str).await {
+                        let file_path = get_content_path().join(cache_str);
+                        return if file_path.is_file() {
+                            let mut file = match File::open(file_path).await {
                                 Ok(file) => file,
                                 Err(_) => {
                                     return Ok(internal_error());
                                 }
                             };
+
+                            match req.headers().get(RANGE) {
+                                Some(r) => {
+                                    let meta = match file.metadata().await {
+                                        Ok(m) => m,
+                                        Err(_) => {
+                                            return Ok(internal_error());
+                                        }
+                                    };
+
+                                    if let Some((start, end)) =
+                                        parse_range_header(r.to_str().unwrap(), meta.len())
+                                    {
+                                        let mut buffer = vec![0; (end - start + 1) as usize];
+
+                                        file.seek(tokio::io::SeekFrom::Start(start)).await.unwrap();
+                                        file.read_exact(&mut buffer[..]).await.unwrap();
+
+                                        return Ok(Response::builder()
+                                            .status(StatusCode::PARTIAL_CONTENT)
+                                            .header(
+                                                CONTENT_RANGE,
+                                                format!("bytes {}-{}/{}", start, end, meta.len())
+                                                    .as_bytes(),
+                                            )
+                                            .body(full(buffer))
+                                            .unwrap());
+                                    }
+                                }
+                                None => {}
+                            }
 
                             let mut contents = Vec::new();
                             file.read_to_end(&mut contents).await.unwrap();
@@ -145,9 +203,13 @@ async fn proxy(
                                 .status(StatusCode::OK)
                                 .body(full(contents))
                                 .unwrap();
-                            return Ok(response);
+                            Ok(response)
                         } else {
-                            let mut file = match File::create(cache_str).await {
+                            /* Remove content range as the proxy needs to cache the file */
+                            let mut req = Request::from(req);
+                            req.headers_mut().remove(CONTENT_RANGE);
+
+                            let mut file = match File::create(file_path).await {
                                 Ok(f) => f,
                                 Err(_) => {
                                     return Ok(internal_error());
@@ -174,7 +236,7 @@ async fn proxy(
                                 }
                             }
 
-                            return Ok(resp.map(|b| b.boxed()));
+                            Ok(resp.map(|b| b.boxed()))
                         }
                     }
                     Err(e) => println!("Failed to convert cache name to str: {:?}", e),
