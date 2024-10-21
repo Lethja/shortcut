@@ -62,14 +62,6 @@ pub struct HttpRequestHeader {
     pub headers: HashMap<String, String>,
 }
 
-#[allow(dead_code)]
-pub struct HttpResponseHeader {
-    pub method: HttpRequestMethod,
-    pub path: String,
-    pub version: String,
-    pub headers: HashMap<String, String>,
-}
-
 fn get_mandatory_http_request_header_line(line: &str) -> Option<(HttpRequestMethod, &str, &str)> {
     let elements: Vec<&str> = line.split_whitespace().collect();
     if elements.len() < 3 {
@@ -320,5 +312,37 @@ impl HttpResponseStatus {
         let date = httpdate::fmt_http_date(SystemTime::now());
 
         format!("{code} {state}\r\nDate: {date}\r\nContent-length: {len}\r\n\r\n{msg}")
+    }
+}
+
+pub struct HttpResponseHeader {
+    pub status: HttpResponseStatus,
+    pub headers: HashMap<String, String>,
+}
+
+#[allow(dead_code)]
+impl HttpResponseHeader {
+    pub fn new(status: HttpResponseStatus) -> Self {
+        HttpResponseHeader {
+            status,
+            headers: Default::default(),
+        }
+    }
+
+    pub fn generate(&mut self) -> String {
+        if !self.headers.contains_key("Date") {
+            self.headers.insert(
+                String::from("Date"),
+                httpdate::fmt_http_date(SystemTime::now()),
+            );
+        }
+
+        let mut str = self.status.to_header();
+        str.push_str("\r\n");
+        for (key, value) in &self.headers {
+            str.push_str(&format!("{}: {}\r\n", key, value));
+        }
+        str.push_str("\r\n");
+        str
     }
 }
