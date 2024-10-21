@@ -51,11 +51,17 @@ async fn handle_connection(mut stream: TcpStream) {
                 Err(_) => HttpResponseStatus::NOT_FOUND.to_response(),
             };
 
-            stream.write_all(response.as_bytes()).await.unwrap();
+            match stream.write_all(response.as_bytes()).await {
+                Ok(x) => x,
+                Err(_) => return,
+            };
         }
         _ => {
             let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
-            stream.write_all(response.as_bytes()).await.unwrap();
+            match stream.write_all(response.as_bytes()).await {
+                Ok(x) => x,
+                Err(_) => return,
+            };
         }
     }
 }
