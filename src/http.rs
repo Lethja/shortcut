@@ -1,7 +1,9 @@
-use std::collections::HashMap;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::net::TcpStream;
-use tokio::time::{self, Duration, Instant};
+use std::{collections::HashMap, fmt::Formatter, time::SystemTime};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    net::TcpStream,
+    time::{self, Duration, Instant},
+};
 
 const END_OF_HTTP_HEADER: &[u8] = "\r\n\r\n".as_bytes();
 
@@ -36,7 +38,7 @@ impl From<&str> for HttpRequestMethod {
 }
 
 impl std::fmt::Display for HttpRequestMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             HttpRequestMethod::GET => write!(f, "GET"),
             HttpRequestMethod::POST => write!(f, "POST"),
