@@ -315,7 +315,8 @@ impl HttpResponseStatus {
         let msg = self.0.to_string();
         let len = msg.len();
         let state = msg.to_uppercase();
+        let date = httpdate::fmt_http_date(SystemTime::now());
 
-        format!("{code} {state}\r\nContent-length: {len}\r\n\r\n{msg}")
+        format!("{code} {state}\r\nDate: {date}\r\nContent-length: {len}\r\n\r\n{msg}")
     }
 }

@@ -5,6 +5,7 @@ publish = false
 
 [dependencies]
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "net", "macros", "rt-multi-thread", "time"] }
+httpdate = { version = "1.0", default-features = false }
 
 [profile.release]
 debug = false
