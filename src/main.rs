@@ -1,6 +1,6 @@
 mod http;
 
-use crate::http::{HttpRequestHeader, HttpRequestMethod};
+use crate::http::{HttpRequestHeader, HttpRequestMethod, HttpResponseStatus};
 use tokio::{
     fs,
     io::{AsyncWriteExt, BufReader},
@@ -48,22 +48,13 @@ async fn handle_connection(mut stream: TcpStream) {
                     string
                 }
 
-                Err(_) => {
-                    let error = "Content not found";
-                    let len = error.len();
-                    let string =
-                        format!("HTTP/1.1 404 FILE NOT FOUND\r\nContent-Length: {len}\r\n\r\n{error}");
-                    string
-                }
+                Err(_) => HttpResponseStatus::NOT_FOUND.to_response(),
             };
 
             stream.write_all(response.as_bytes()).await.unwrap();
         }
         _ => {
-            let error = "Method not allowed";
-            let len = error.len();
-            let response =
-                format!("HTTP/1.1 405 METHOD NOT ALLOWED\r\nContent-Length: {len}\r\n\r\n{error}");
+            let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
             stream.write_all(response.as_bytes()).await.unwrap();
         }
     }
