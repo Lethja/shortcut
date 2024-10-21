@@ -6,10 +6,23 @@ use tokio::{
 
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:7878").await.unwrap();
+    let listener = match TcpListener::bind("127.0.0.1:7878").await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Unable to bind server: {e}");
+            return;
+        }
+    };
 
     loop {
-        let (stream, _) = listener.accept().await.unwrap();
+        let (stream, _) = match listener.accept().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Unable to accept server socket: {e}");
+                return;
+            }
+        };
+
         tokio::spawn(async move {
             handle_connection(stream).await;
         });
