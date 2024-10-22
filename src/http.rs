@@ -8,31 +8,31 @@ use tokio::{
 const END_OF_HTTP_HEADER: &[u8] = "\r\n\r\n".as_bytes();
 
 pub enum HttpRequestMethod {
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    HEAD,
-    OPTIONS,
-    TRACE,
-    CONNECT,
-    PATCH,
-    CUSTOM(String),
+    Get,
+    Post,
+    Put,
+    Delete,
+    Head,
+    Options,
+    Trace,
+    Connect,
+    Patch,
+    Custom(String),
 }
 
 impl From<&str> for HttpRequestMethod {
     fn from(input: &str) -> HttpRequestMethod {
         match input.to_uppercase().as_str() {
-            "GET" => HttpRequestMethod::GET,
-            "POST" => HttpRequestMethod::POST,
-            "PUT" => HttpRequestMethod::PUT,
-            "DELETE" => HttpRequestMethod::DELETE,
-            "HEAD" => HttpRequestMethod::HEAD,
-            "OPTIONS" => HttpRequestMethod::OPTIONS,
-            "TRACE" => HttpRequestMethod::TRACE,
-            "CONNECT" => HttpRequestMethod::CONNECT,
-            "PATCH" => HttpRequestMethod::PATCH,
-            _ => HttpRequestMethod::CUSTOM(input.to_uppercase()),
+            "GET" => HttpRequestMethod::Get,
+            "POST" => HttpRequestMethod::Post,
+            "PUT" => HttpRequestMethod::Put,
+            "DELETE" => HttpRequestMethod::Delete,
+            "HEAD" => HttpRequestMethod::Head,
+            "OPTIONS" => HttpRequestMethod::Options,
+            "TRACE" => HttpRequestMethod::Trace,
+            "CONNECT" => HttpRequestMethod::Connect,
+            "PATCH" => HttpRequestMethod::Patch,
+            _ => HttpRequestMethod::Custom(input.to_uppercase()),
         }
     }
 }
@@ -40,16 +40,16 @@ impl From<&str> for HttpRequestMethod {
 impl std::fmt::Display for HttpRequestMethod {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            HttpRequestMethod::GET => write!(f, "GET"),
-            HttpRequestMethod::POST => write!(f, "POST"),
-            HttpRequestMethod::PUT => write!(f, "PUT"),
-            HttpRequestMethod::DELETE => write!(f, "DELETE"),
-            HttpRequestMethod::HEAD => write!(f, "HEAD"),
-            HttpRequestMethod::OPTIONS => write!(f, "OPTIONS"),
-            HttpRequestMethod::TRACE => write!(f, "TRACE"),
-            HttpRequestMethod::CONNECT => write!(f, "CONNECT"),
-            HttpRequestMethod::PATCH => write!(f, "PATCH"),
-            HttpRequestMethod::CUSTOM(s) => write!(f, "{}", s),
+            HttpRequestMethod::Get => write!(f, "GET"),
+            HttpRequestMethod::Post => write!(f, "POST"),
+            HttpRequestMethod::Put => write!(f, "PUT"),
+            HttpRequestMethod::Delete => write!(f, "DELETE"),
+            HttpRequestMethod::Head => write!(f, "HEAD"),
+            HttpRequestMethod::Options => write!(f, "OPTIONS"),
+            HttpRequestMethod::Trace => write!(f, "TRACE"),
+            HttpRequestMethod::Connect => write!(f, "CONNECT"),
+            HttpRequestMethod::Patch => write!(f, "PATCH"),
+            HttpRequestMethod::Custom(s) => write!(f, "{}", s),
         }
     }
 }
@@ -70,7 +70,7 @@ fn get_mandatory_http_request_header_line(line: &str) -> Option<(HttpRequestMeth
 
     let method = HttpRequestMethod::from(elements[0]);
     let path = elements[1];
-    if !path.starts_with('/') {
+    if !path.starts_with('/') || !path.contains("://") {
         return None;
     }
 
@@ -115,7 +115,7 @@ impl HttpRequestHeader {
 
         let header = String::from_utf8_lossy(&buffer);
         let lines: Vec<String> = header.split("\r\n").map(|s| s.to_string()).collect();
-        let mandatory_line = match lines.get(0) {
+        let mandatory_line = match lines.first() {
             None => return None,
             Some(s) => s,
         };
@@ -148,12 +148,7 @@ impl HttpRequestHeader {
 
     #[allow(dead_code)]
     pub fn from_tcp_buffer(value: BufReader<&mut TcpStream>) -> Option<HttpRequestHeader> {
-        match tokio::runtime::Handle::current()
-            .block_on(HttpRequestHeader::from_tcp_buffer_async(value))
-        {
-            Some(header) => Some(header),
-            None => None,
-        }
+        tokio::runtime::Handle::current().block_on(HttpRequestHeader::from_tcp_buffer_async(value))
     }
 }
 

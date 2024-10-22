@@ -40,7 +40,7 @@ async fn handle_connection(mut stream: TcpStream) {
     };
 
     match header.method {
-        HttpRequestMethod::GET => {
+        HttpRequestMethod::Get => {
             let response = match fs::read_to_string("hello.html").await {
                 Ok(s) => {
                     let len = s.len();
@@ -51,17 +51,17 @@ async fn handle_connection(mut stream: TcpStream) {
                 Err(_) => HttpResponseStatus::NOT_FOUND.to_response(),
             };
 
-            match stream.write_all(response.as_bytes()).await {
-                Ok(x) => x,
-                Err(_) => return,
-            };
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .unwrap_or_default()
         }
         _ => {
             let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
-            match stream.write_all(response.as_bytes()).await {
-                Ok(x) => x,
-                Err(_) => return,
-            };
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .unwrap_or_default()
         }
     }
 }
