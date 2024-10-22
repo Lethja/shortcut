@@ -86,8 +86,8 @@ fn assemble_mandatory_http_request_header_line(method: &str, path: &str, version
     format!("{method} {path} {version}")
 }
 
+#[allow(dead_code)]
 impl HttpRequestHeader {
-    #[allow(dead_code)]
     pub async fn from_tcp_buffer_async(mut value: BufReader<&mut TcpStream>) -> Option<Self> {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
@@ -150,9 +150,36 @@ impl HttpRequestHeader {
         })
     }
 
-    #[allow(dead_code)]
     pub fn from_tcp_buffer(value: BufReader<&mut TcpStream>) -> Option<HttpRequestHeader> {
         tokio::runtime::Handle::current().block_on(HttpRequestHeader::from_tcp_buffer_async(value))
+    }
+
+    pub fn is_absolute_path(&self) -> bool {
+        match self.path.splitn(2, "://").next() {
+            None => {false}
+            Some(i) => {i.starts_with("http")}
+        }
+    }
+
+    pub fn is_relative_path(&self) -> bool {
+        self.path.starts_with('/')
+    }
+
+    pub fn get_path_without_query(&self) -> String {
+        match self.path.splitn(2, '?').next() {
+            None => {self.path.to_string()}
+            Some(i) => {i.to_string()}
+        }
+    }
+
+    pub fn get_query(&self) -> Option<String> {
+        match self.path.find('?') {
+            None => None,
+            Some(i) => {
+                let query = &self.path[i..];
+                Some(query.to_string())
+            }
+        }
     }
 
     pub fn generate(&self) -> String {
