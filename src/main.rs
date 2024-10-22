@@ -1,10 +1,11 @@
 mod http;
 
-use crate::http::{HttpRequestHeader, HttpRequestMethod, HttpResponseStatus};
+use crate::http::{HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus};
 use tokio::{
     io::{AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
 };
+use url::{Host, Url};
 
 #[tokio::main]
 async fn main() {
@@ -58,6 +59,30 @@ async fn handle_connection(mut stream: TcpStream) {
                     }
                 };
             } else {
+                let host = match url_is_http(&header.path) {
+                    None => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                        stream
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_else(|_| ());
+                        return;
+                    }
+                    Some(h) => h.to_string(),
+                };
+
+                let fetch = match TcpStream::connect(host).await {
+                    Ok(s) => {s}
+                    Err(_) => {
+                        let response = HttpResponseStatus::BAD_GATEWAY.to_response();
+                        stream
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_else(|_| ());
+                        return;
+                    }
+                };
+
                 let path = header.path;
                 println!("Proxy path {path} requested");
                 let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
@@ -74,5 +99,25 @@ async fn handle_connection(mut stream: TcpStream) {
                 .await
                 .unwrap_or_default()
         }
+    }
+}
+
+fn url_is_http(url: &Url) -> Option<Host> {
+    if url.scheme() != "http" {
+        return None;
+    }
+
+    let host = match url.host() {
+        None => return None,
+        Some(s) => s,
+    };
+
+    let port = url.port_or_known_default().unwrap_or(80);
+
+    let host = format!("{host}:{port}");
+
+    match Host::parse(host.as_str()) {
+        Ok(h) => Some(h),
+        Err(_) => None,
     }
 }
