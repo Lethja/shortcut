@@ -39,6 +39,9 @@ async fn handle_connection(mut stream: TcpStream) {
         Some(header) => header,
     };
 
+    #[cfg(debug_assertions)]
+    println!("header = {:?}", header.generate());
+
     match header.method {
         HttpRequestMethod::Get => {
             let response = match fs::read_to_string("hello.html").await {

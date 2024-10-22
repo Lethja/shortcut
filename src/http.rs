@@ -82,6 +82,10 @@ fn get_mandatory_http_request_header_line(line: &str) -> Option<(HttpRequestMeth
     Some((method, path, version))
 }
 
+fn assemble_mandatory_http_request_header_line(method: &str, path: &str, version: &str) -> String {
+    format!("{method} {path} {version}")
+}
+
 impl HttpRequestHeader {
     #[allow(dead_code)]
     pub async fn from_tcp_buffer_async(mut value: BufReader<&mut TcpStream>) -> Option<Self> {
@@ -149,6 +153,19 @@ impl HttpRequestHeader {
     #[allow(dead_code)]
     pub fn from_tcp_buffer(value: BufReader<&mut TcpStream>) -> Option<HttpRequestHeader> {
         tokio::runtime::Handle::current().block_on(HttpRequestHeader::from_tcp_buffer_async(value))
+    }
+
+    pub fn generate(&self) -> String {
+        let mut str = assemble_mandatory_http_request_header_line(
+            self.method.to_string().as_str(),
+            self.path.as_str(),
+            self.version.as_str(),
+        );
+        for (key, value) in &self.headers {
+            str.push_str(&format!("\r\n{key}: {value}"))
+        }
+        str.push_str("\r\n\r\n");
+        str
     }
 }
 
