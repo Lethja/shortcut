@@ -47,7 +47,10 @@ async fn handle_connection(mut stream: TcpStream) {
                 match header.get_query() {
                     None => {
                         let response = HttpResponseStatus::NO_CONTENT.to_header();
-                        stream.write_all(response.as_bytes()).await.unwrap_or_else(|_| ());
+                        stream
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_else(|_| ());
                         return;
                     }
                     Some(_q) => {
@@ -55,7 +58,13 @@ async fn handle_connection(mut stream: TcpStream) {
                     }
                 };
             } else {
-
+                let path = header.path;
+                println!("Proxy path {path} requested");
+                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap_or_else(|_| ());
             }
         }
         _ => {

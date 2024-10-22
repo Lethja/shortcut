@@ -1,9 +1,10 @@
-use std::{collections::HashMap, fmt::Formatter, time::SystemTime};
+use std::{collections::HashMap, fmt::Formatter, str::FromStr, time::SystemTime};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
     time::{self, Duration, Instant},
 };
+use url::Url;
 
 const END_OF_HTTP_HEADER: &[u8] = "\r\n\r\n".as_bytes();
 
@@ -57,7 +58,7 @@ impl std::fmt::Display for HttpRequestMethod {
 #[allow(dead_code)]
 pub struct HttpRequestHeader {
     pub method: HttpRequestMethod,
-    pub path: String,
+    pub path: Url,
     pub version: String,
     pub headers: HashMap<String, String>,
 }
@@ -139,7 +140,17 @@ impl HttpRequestHeader {
             headers.insert(property, value);
         }
 
-        let path = path.to_string();
+        let path = match Url::from_str(path) {
+            Ok(u) => u,
+            Err(_) => {
+                let error = HttpResponseStatus::BAD_REQUEST.to_response();
+                value
+                    .write_all(error.as_bytes())
+                    .await
+                    .unwrap_or_else(|_| ());
+                return None;
+            }
+        };
         let version = version.to_string();
 
         Some(HttpRequestHeader {
@@ -155,30 +166,21 @@ impl HttpRequestHeader {
     }
 
     pub fn has_absolute_path(&self) -> bool {
-        match self.path.splitn(2, "://").next() {
-            None => {false}
-            Some(i) => {i.starts_with("http")}
-        }
+        self.path.has_host()
     }
 
     pub fn has_relative_path(&self) -> bool {
-        self.path.starts_with('/')
+        !self.path.has_host()
     }
 
     pub fn get_path_without_query(&self) -> String {
-        match self.path.splitn(2, '?').next() {
-            None => {self.path.to_string()}
-            Some(i) => {i.to_string()}
-        }
+        self.path.path().to_string()
     }
 
     pub fn get_query(&self) -> Option<String> {
-        match self.path.find('?') {
+        match self.path.query() {
             None => None,
-            Some(i) => {
-                let query = &self.path[i..];
-                Some(query.to_string())
-            }
+            Some(i) => Some(i.to_string()),
         }
     }
 
