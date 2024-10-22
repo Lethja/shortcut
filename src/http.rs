@@ -55,15 +55,33 @@ impl std::fmt::Display for HttpRequestMethod {
     }
 }
 
+pub struct HttpVersion(u16);
+
+impl HttpVersion {
+    pub const HTTP_V09: Self = HttpVersion(09);
+    pub const HTTP_V10: Self = HttpVersion(10);
+    pub const HTTP_V11: Self = HttpVersion(11);
+
+    pub fn as_str(&self) -> &str {
+        match self.0 {
+            10 => "HTTP/1.0",
+            11 => "HTTP/1.1",
+            _ => "",
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub struct HttpRequestHeader {
     pub method: HttpRequestMethod,
     pub path: Url,
-    pub version: String,
+    pub version: HttpVersion,
     pub headers: HashMap<String, String>,
 }
 
-fn get_mandatory_http_request_header_line(line: &str) -> Option<(HttpRequestMethod, &str, &str)> {
+fn get_mandatory_http_request_header_line(
+    line: &str,
+) -> Option<(HttpRequestMethod, &str, HttpVersion)> {
     let elements: Vec<&str> = line.split_whitespace().collect();
     if elements.len() < 3 {
         return None;
@@ -76,9 +94,11 @@ fn get_mandatory_http_request_header_line(line: &str) -> Option<(HttpRequestMeth
     }
 
     let version = elements[2];
-    if !version.to_uppercase().contains("HTTP") {
-        return None;
-    }
+    let version = match version.to_uppercase().as_str() {
+        "HTTP/1.0" => HttpVersion::HTTP_V10,
+        "HTTP/1.1" => HttpVersion::HTTP_V11,
+        _ => HttpVersion::HTTP_V09,
+    };
 
     Some((method, path, version))
 }
@@ -151,7 +171,6 @@ impl HttpRequestHeader {
                 return None;
             }
         };
-        let version = version.to_string();
 
         Some(HttpRequestHeader {
             method,
