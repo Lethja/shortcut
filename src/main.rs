@@ -2,7 +2,6 @@ mod http;
 
 use crate::http::{HttpRequestHeader, HttpRequestMethod, HttpResponseStatus};
 use tokio::{
-    fs,
     io::{AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
 };
@@ -44,20 +43,20 @@ async fn handle_connection(mut stream: TcpStream) {
 
     match header.method {
         HttpRequestMethod::Get => {
-            let response = match fs::read_to_string("hello.html").await {
-                Ok(s) => {
-                    let len = s.len();
-                    let string = format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n\r\n{s}");
-                    string
-                }
+            if header.has_relative_path() {
+                match header.get_query() {
+                    None => {
+                        let response = HttpResponseStatus::NO_CONTENT.to_header();
+                        stream.write_all(response.as_bytes()).await.unwrap_or_else(|_| ());
+                        return;
+                    }
+                    Some(_q) => {
+                        todo!("If query is certs offer the certificate")
+                    }
+                };
+            } else {
 
-                Err(_) => HttpResponseStatus::NOT_FOUND.to_response(),
-            };
-
-            stream
-                .write_all(response.as_bytes())
-                .await
-                .unwrap_or_default()
+            }
         }
         _ => {
             let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();

@@ -154,14 +154,14 @@ impl HttpRequestHeader {
         tokio::runtime::Handle::current().block_on(HttpRequestHeader::from_tcp_buffer_async(value))
     }
 
-    pub fn is_absolute_path(&self) -> bool {
+    pub fn has_absolute_path(&self) -> bool {
         match self.path.splitn(2, "://").next() {
             None => {false}
             Some(i) => {i.starts_with("http")}
         }
     }
 
-    pub fn is_relative_path(&self) -> bool {
+    pub fn has_relative_path(&self) -> bool {
         self.path.starts_with('/')
     }
 
