@@ -70,7 +70,7 @@ fn get_mandatory_http_request_header_line(line: &str) -> Option<(HttpRequestMeth
 
     let method = HttpRequestMethod::from(elements[0]);
     let path = elements[1];
-    if !path.starts_with('/') || !path.contains("://") {
+    if !path.starts_with('/') && !path.contains("://") {
         return None;
     }
 
@@ -220,7 +220,7 @@ impl HttpResponseStatus {
     pub const NOT_EXTENDED: Self = HttpResponseStatus(510);
     pub const NETWORK_AUTHENTICATION_REQUIRED: Self = HttpResponseStatus(511);
 
-    pub fn to_string(&self) -> &'static str {
+    pub fn to_description(&self) -> &'static str {
         match self.0 {
             100 => "Continue",
             101 => "Switching Protocols",
@@ -295,18 +295,18 @@ impl HttpResponseStatus {
 
     pub fn to_header(&self) -> String {
         let code = self.0;
-        let str = self.0.to_string().to_uppercase();
+        let str = self.to_description().to_uppercase();
         format!("{code} {str}")
     }
 
     pub fn to_response(&self) -> String {
         let code = self.0;
-        let msg = self.0.to_string();
+        let msg = self.to_description();
         let len = msg.len();
         let state = msg.to_uppercase();
         let date = httpdate::fmt_http_date(SystemTime::now());
 
-        format!("{code} {state}\r\nDate: {date}\r\nContent-length: {len}\r\n\r\n{msg}")
+        format!("HTTP/1.1 {code} {state}\r\nDate: {date}\r\nContent-length: {len}\r\n\r\n{msg}")
     }
 }
 
