@@ -340,7 +340,8 @@ impl HttpResponseStatus {
     pub fn to_header(&self) -> String {
         let code = self.0;
         let str = self.to_description().to_uppercase();
-        format!("{code} {str}")
+        let date = httpdate::fmt_http_date(SystemTime::now());
+        format!("{code} {str}\r\nDate: {date}")
     }
 
     pub fn to_response(&self) -> String {
