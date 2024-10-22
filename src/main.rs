@@ -9,7 +9,7 @@ use tokio::{
 
 #[tokio::main]
 async fn main() {
-    let listener = match TcpListener::bind("127.0.0.1:7878").await {
+    let listener = match TcpListener::bind("0.0.0.0:3142").await {
         Ok(l) => l,
         Err(e) => {
             eprintln!("Unable to bind server: {e}");
