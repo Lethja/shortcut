@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::{collections::HashMap, fmt::Formatter, str::FromStr, time::SystemTime};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -69,6 +70,14 @@ impl HttpVersion {
             _ => "",
         }
     }
+
+    pub fn from(str: &str) -> Self {
+        match str {
+            "HTTP/1.0" => Self::HTTP_V10,
+            "HTTP/1.1" => Self::HTTP_V11,
+            _ => Self::HTTP_V09,
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -103,13 +112,30 @@ fn get_mandatory_http_request_header_line(
     Some((method, path, version))
 }
 
+fn get_mandatory_http_response_header_line(
+    line: &str,
+) -> Option<(HttpResponseStatus, HttpVersion)> {
+    let elements: Vec<&str> = line.splitn(3, ' ').collect();
+    if elements.len() < 2 {
+        return None;
+    }
+
+    let status = match elements[1].parse::<u16>() {
+        Ok(u) => HttpResponseStatus(u),
+        Err(_) => return None,
+    };
+    let version = HttpVersion::from(elements[0]);
+
+    Some((status, version))
+}
+
 fn assemble_mandatory_http_request_header_line(method: &str, path: &str, version: &str) -> String {
     format!("{method} {path} {version}")
 }
 
 #[allow(dead_code)]
 impl HttpRequestHeader {
-    pub async fn from_tcp_buffer_async(mut value: BufReader<&mut TcpStream>) -> Option<Self> {
+    pub async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
@@ -148,17 +174,8 @@ impl HttpRequestHeader {
             None => return None,
             Some((a, b, c)) => (a, b, c),
         };
-        let mut headers = HashMap::<String, String>::new();
-
-        for line in lines.iter().skip(1) {
-            let mut header = line.splitn(2, '\'');
-            let property = match header.next() {
-                Some(p) => p.to_string(),
-                None => continue,
-            };
-            let value = header.next().unwrap_or_default().to_string();
-            headers.insert(property, value);
-        }
+        let headers = get_http_headers(&lines);
+        consume_http_header(value);
 
         let path = match Url::from_str(path) {
             Ok(u) => u,
@@ -180,8 +197,9 @@ impl HttpRequestHeader {
         })
     }
 
-    pub fn from_tcp_buffer(value: BufReader<&mut TcpStream>) -> Option<HttpRequestHeader> {
-        tokio::runtime::Handle::current().block_on(HttpRequestHeader::from_tcp_buffer_async(value))
+    pub fn from_tcp_buffer(mut value: BufReader<&mut TcpStream>) -> Option<HttpRequestHeader> {
+        tokio::runtime::Handle::current()
+            .block_on(HttpRequestHeader::from_tcp_buffer_async(&mut value))
     }
 
     pub fn has_absolute_path(&self) -> bool {
@@ -379,6 +397,32 @@ impl HttpResponseStatus {
 pub struct HttpResponseHeader {
     pub status: HttpResponseStatus,
     pub headers: HashMap<String, String>,
+    pub version: HttpVersion,
+}
+
+fn get_http_headers(lines: &Vec<String>) -> HashMap<String, String> {
+    let mut headers = HashMap::<String, String>::new();
+
+    for line in lines.iter().skip(1) {
+        let mut header = line.splitn(2, '\'');
+        let property = match header.next() {
+            Some(p) => p.to_string(),
+            None => continue,
+        };
+        let value = header.next().unwrap_or_default().to_string();
+        headers.insert(property, value);
+    }
+    headers
+}
+
+fn consume_http_header(value: &mut BufReader<&mut TcpStream>) {
+    if let Some(pos) = value
+        .buffer()
+        .windows(END_OF_HTTP_HEADER.len())
+        .position(|window| window == END_OF_HTTP_HEADER)
+    {
+        value.consume(pos + END_OF_HTTP_HEADER.len());
+    }
 }
 
 #[allow(dead_code)]
@@ -387,7 +431,58 @@ impl HttpResponseHeader {
         HttpResponseHeader {
             status,
             headers: Default::default(),
+            version: HttpVersion::HTTP_V11,
         }
+    }
+
+    pub async fn from_tcp_buffer_async(mut value: BufReader<&mut TcpStream>) -> Option<Self> {
+        let mut buffer = Vec::new();
+        let mut buffer_size: usize = 0;
+        let begin = Instant::now();
+
+        while !buffer.ends_with(END_OF_HTTP_HEADER) {
+            match time::timeout(
+                Duration::from_secs(1),
+                value.read_until(
+                    END_OF_HTTP_HEADER[END_OF_HTTP_HEADER.len() - 1],
+                    &mut buffer,
+                ),
+            )
+            .await
+            {
+                Ok(Ok(i)) => {
+                    buffer_size += i;
+                    if buffer_size >= 8192 {
+                        return None;
+                    }
+                }
+                Ok(Err(_)) | Err(_) => return None,
+            }
+
+            if begin.elapsed() >= Duration::from_secs(5) {
+                return None;
+            }
+        }
+
+        let headers = String::from_utf8_lossy(&buffer);
+        let lines: Vec<String> = headers.split("\r\n").map(|s| s.to_string()).collect();
+        let mandatory_line = match lines.first() {
+            None => return None,
+            Some(s) => s,
+        };
+        let (status, version) = match get_mandatory_http_response_header_line(mandatory_line) {
+            None => return None,
+            Some((a, b)) => (a, b),
+        };
+
+        let headers = get_http_headers(&lines);
+        consume_http_header(&mut value);
+
+        Some(HttpResponseHeader {
+            status,
+            headers,
+            version,
+        })
     }
 
     pub fn generate(&mut self) -> String {
@@ -405,5 +500,27 @@ impl HttpResponseHeader {
         }
         str.push_str("\r\n");
         str
+    }
+
+    pub fn get_cache_name(self, url: &Url) -> Option<PathBuf> {
+        let domain = String::from(self.headers.get("Host").unwrap_or(&String::from("Unknown")));
+        let filename = match self.headers.get("Content-Disposition") {
+            None => {
+                let segments = match url.path_segments()?.last() {
+                    None => return None,
+                    Some(s) => {
+                        if s.contains('.') {
+                            s
+                        } else {
+                            return None;
+                        }
+                    }
+                };
+                segments
+            }
+            Some(v) => v,
+        };
+        let path = Path::new(&domain).join(filename);
+        Some(path)
     }
 }

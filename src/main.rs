@@ -1,6 +1,8 @@
 mod http;
 
 use crate::http::{HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus};
+use std::path::PathBuf;
+use tokio::fs::File;
 use tokio::{
     io::{AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -33,11 +35,12 @@ async fn main() {
 }
 
 async fn handle_connection(mut stream: TcpStream) {
-    let client_buf_reader = BufReader::new(&mut stream);
-    let client_request_header = match HttpRequestHeader::from_tcp_buffer_async(client_buf_reader).await {
-        None => return,
-        Some(header) => header,
-    };
+    let mut client_buf_reader = BufReader::new(&mut stream);
+    let client_request_header =
+        match HttpRequestHeader::from_tcp_buffer_async(&mut client_buf_reader).await {
+            None => return,
+            Some(header) => header,
+        };
 
     #[cfg(debug_assertions)]
     println!("header = {:?}", client_request_header.generate());
@@ -96,17 +99,62 @@ async fn handle_connection(mut stream: TcpStream) {
                     },
                 };
 
-                //TODO: implement HttpResponseHeader::from_tcp_buffer_async
-                //let fetch_response_header = HttpResponseHeader::from_tcp_buffer_async(fetch_buf_reader).await;
-
-                match fetch_stream.write_all((&*fetch_request.generate()).as_ref()).await {
+                match fetch_buf_reader
+                    .write_all(fetch_request.generate().as_ref())
+                    .await
+                {
                     Ok(_) => {}
                     Err(_) => {
                         let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                        stream
+                        client_buf_reader
                             .write_all(response.as_bytes())
                             .await
                             .unwrap_or_else(|_| ());
+                    }
+                }
+
+                let mut fetch_response_header =
+                    match HttpResponseHeader::from_tcp_buffer_async(fetch_buf_reader).await {
+                        None => {
+                            let response = HttpResponseStatus::BAD_GATEWAY.to_response();
+                            stream
+                                .write_all(response.as_bytes())
+                                .await
+                                .unwrap_or_else(|_| ());
+                            return;
+                        }
+                        Some(s) => s,
+                    };
+
+                let fetch_response_header_data = fetch_response_header.generate();
+                match client_buf_reader
+                    .write_all(fetch_response_header_data.as_bytes())
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(_) => return,
+                }
+
+                match fetch_response_header.status.to_code() {
+                    200 => {
+                        let file = match fetch_response_header
+                            .get_cache_name(&client_request_header.path)
+                        {
+                            None => None,
+                            Some(path) => match File::create(path).await {
+                                Ok(f) => Some(f),
+                                Err(_) => None,
+                            },
+                        };
+
+                        if let file = Some(file) {
+                            todo!("Setup a way to write to file")
+                        }
+
+                        todo!("Setup a way to write to client")
+                    }
+                    _ => {
+                        todo!("Respond without a cache file")
                     }
                 }
             }
