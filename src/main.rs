@@ -33,19 +33,19 @@ async fn main() {
 }
 
 async fn handle_connection(mut stream: TcpStream) {
-    let buf_reader = BufReader::new(&mut stream);
-    let header = match HttpRequestHeader::from_tcp_buffer_async(buf_reader).await {
+    let client_buf_reader = BufReader::new(&mut stream);
+    let client_request_header = match HttpRequestHeader::from_tcp_buffer_async(client_buf_reader).await {
         None => return,
         Some(header) => header,
     };
 
     #[cfg(debug_assertions)]
-    println!("header = {:?}", header.generate());
+    println!("header = {:?}", client_request_header.generate());
 
-    match header.method {
+    match client_request_header.method {
         HttpRequestMethod::Get => {
-            if header.has_relative_path() {
-                match header.get_query() {
+            if client_request_header.has_relative_path() {
+                match client_request_header.get_query() {
                     None => {
                         let response = HttpResponseStatus::NO_CONTENT.to_header();
                         stream
@@ -59,7 +59,7 @@ async fn handle_connection(mut stream: TcpStream) {
                     }
                 };
             } else {
-                let host = match url_is_http(&header.path) {
+                let host = match url_is_http(&client_request_header.path) {
                     None => {
                         let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
                         stream
@@ -71,8 +71,8 @@ async fn handle_connection(mut stream: TcpStream) {
                     Some(h) => h.to_string(),
                 };
 
-                let fetch = match TcpStream::connect(host).await {
-                    Ok(s) => {s}
+                let mut fetch_stream = match TcpStream::connect(host).await {
+                    Ok(s) => s,
                     Err(_) => {
                         let response = HttpResponseStatus::BAD_GATEWAY.to_response();
                         stream
@@ -83,13 +83,32 @@ async fn handle_connection(mut stream: TcpStream) {
                     }
                 };
 
-                let path = header.path;
-                println!("Proxy path {path} requested");
-                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_else(|_| ());
+                let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
+
+                let fetch_request = HttpRequestHeader {
+                    method: HttpRequestMethod::Get,
+                    path: client_request_header.path.clone(),
+                    version: client_request_header.version,
+                    headers: {
+                        let mut headers = client_request_header.headers.clone();
+                        headers.remove("Range");
+                        headers
+                    },
+                };
+
+                //TODO: implement HttpResponseHeader::from_tcp_buffer_async
+                //let fetch_response_header = HttpResponseHeader::from_tcp_buffer_async(fetch_buf_reader).await;
+
+                match fetch_stream.write_all((&*fetch_request.generate()).as_ref()).await {
+                    Ok(_) => {}
+                    Err(_) => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                        stream
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_else(|_| ());
+                    }
+                }
             }
         }
         _ => {
