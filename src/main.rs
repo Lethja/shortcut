@@ -1,7 +1,6 @@
 mod http;
 
 use crate::http::{HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus};
-use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::{
     io::{AsyncWriteExt, BufReader},
@@ -54,8 +53,7 @@ async fn handle_connection(mut stream: TcpStream) {
                         stream
                             .write_all(response.as_bytes())
                             .await
-                            .unwrap_or_else(|_| ());
-                        return;
+                            .unwrap_or_default();
                     }
                     Some(_q) => {
                         todo!("If query is certs offer the certificate")
@@ -68,7 +66,7 @@ async fn handle_connection(mut stream: TcpStream) {
                         stream
                             .write_all(response.as_bytes())
                             .await
-                            .unwrap_or_else(|_| ());
+                            .unwrap_or_default();
                         return;
                     }
                     Some(h) => h.to_string(),
@@ -81,7 +79,7 @@ async fn handle_connection(mut stream: TcpStream) {
                         stream
                             .write_all(response.as_bytes())
                             .await
-                            .unwrap_or_else(|_| ());
+                            .unwrap_or_default();
                         return;
                     }
                 };
@@ -109,7 +107,7 @@ async fn handle_connection(mut stream: TcpStream) {
                         client_buf_reader
                             .write_all(response.as_bytes())
                             .await
-                            .unwrap_or_else(|_| ());
+                            .unwrap_or_default();
                     }
                 }
 
@@ -120,7 +118,7 @@ async fn handle_connection(mut stream: TcpStream) {
                             stream
                                 .write_all(response.as_bytes())
                                 .await
-                                .unwrap_or_else(|_| ());
+                                .unwrap_or_default();
                             return;
                         }
                         Some(s) => s,
@@ -137,7 +135,7 @@ async fn handle_connection(mut stream: TcpStream) {
 
                 match fetch_response_header.status.to_code() {
                     200 => {
-                        let file = match fetch_response_header
+                        let _file = match fetch_response_header
                             .get_cache_name(&client_request_header.path)
                         {
                             None => None,
@@ -147,11 +145,7 @@ async fn handle_connection(mut stream: TcpStream) {
                             },
                         };
 
-                        if let file = Some(file) {
-                            todo!("Setup a way to write to file")
-                        }
-
-                        todo!("Setup a way to write to client")
+                        todo!("Setup a way to write to file and client");
                     }
                     _ => {
                         todo!("Respond without a cache file")

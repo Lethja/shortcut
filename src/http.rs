@@ -59,7 +59,7 @@ impl std::fmt::Display for HttpRequestMethod {
 pub struct HttpVersion(u16);
 
 impl HttpVersion {
-    pub const HTTP_V09: Self = HttpVersion(09);
+    pub const HTTP_V09: Self = HttpVersion(9);
     pub const HTTP_V10: Self = HttpVersion(10);
     pub const HTTP_V11: Self = HttpVersion(11);
 
@@ -181,10 +181,7 @@ impl HttpRequestHeader {
             Ok(u) => u,
             Err(_) => {
                 let error = HttpResponseStatus::BAD_REQUEST.to_response();
-                value
-                    .write_all(error.as_bytes())
-                    .await
-                    .unwrap_or_else(|_| ());
+                value.write_all(error.as_bytes()).await.unwrap_or_default();
                 return None;
             }
         };
@@ -215,10 +212,7 @@ impl HttpRequestHeader {
     }
 
     pub fn get_query(&self) -> Option<String> {
-        match self.path.query() {
-            None => None,
-            Some(i) => Some(i.to_string()),
-        }
+        self.path.query().map(|i| i.to_string())
     }
 
     pub fn generate(&self) -> String {
@@ -400,7 +394,7 @@ pub struct HttpResponseHeader {
     pub version: HttpVersion,
 }
 
-fn get_http_headers(lines: &Vec<String>) -> HashMap<String, String> {
+fn get_http_headers(lines: &[String]) -> HashMap<String, String> {
     let mut headers = HashMap::<String, String>::new();
 
     for line in lines.iter().skip(1) {
@@ -505,19 +499,16 @@ impl HttpResponseHeader {
     pub fn get_cache_name(self, url: &Url) -> Option<PathBuf> {
         let domain = String::from(self.headers.get("Host").unwrap_or(&String::from("Unknown")));
         let filename = match self.headers.get("Content-Disposition") {
-            None => {
-                let segments = match url.path_segments()?.last() {
-                    None => return None,
-                    Some(s) => {
-                        if s.contains('.') {
-                            s
-                        } else {
-                            return None;
-                        }
+            None => match url.path_segments()?.last() {
+                None => return None,
+                Some(s) => {
+                    if s.contains('.') {
+                        s
+                    } else {
+                        return None;
                     }
-                };
-                segments
-            }
+                }
+            },
             Some(v) => v,
         };
         let path = Path::new(&domain).join(filename);
