@@ -105,7 +105,7 @@ async fn handle_connection(mut stream: TcpStream) {
                 Ok(_) => {}
                 Err(_) => {
                     let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    client_buf_reader
+                    stream
                         .write_all(response.as_bytes())
                         .await
                         .unwrap_or_default();
@@ -126,7 +126,7 @@ async fn handle_connection(mut stream: TcpStream) {
                 };
 
             let fetch_response_header_data = fetch_response_header.generate();
-            match client_buf_reader
+            match stream
                 .write_all(fetch_response_header_data.as_bytes())
                 .await
             {
@@ -141,7 +141,7 @@ async fn handle_connection(mut stream: TcpStream) {
                     None => {
                         let response =
                             HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                        client_buf_reader
+                        stream
                             .write_all(response.as_bytes())
                             .await
                             .unwrap_or_default();
@@ -167,7 +167,7 @@ async fn handle_connection(mut stream: TcpStream) {
                             let data = &buffer[..n];
 
                             let file_write_future = file.write_all(data);
-                            let client_write_future = client_buf_reader.write_all(data);
+                            let client_write_future = stream.write_all(data);
 
                             let _ =  join!(file_write_future, client_write_future);
                         }
