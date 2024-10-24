@@ -391,6 +391,7 @@ impl HttpResponseStatus {
 pub struct HttpResponseHeader {
     pub status: HttpResponseStatus,
     pub headers: HashMap<String, String>,
+    #[allow(dead_code)]
     pub version: HttpVersion,
 }
 
@@ -429,7 +430,7 @@ impl HttpResponseHeader {
         }
     }
 
-    pub async fn from_tcp_buffer_async(mut value: BufReader<&mut TcpStream>) -> Option<Self> {
+    pub async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
@@ -470,7 +471,7 @@ impl HttpResponseHeader {
         };
 
         let headers = get_http_headers(&lines);
-        consume_http_header(&mut value);
+        consume_http_header(value);
 
         Some(HttpResponseHeader {
             status,
