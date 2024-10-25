@@ -13,7 +13,9 @@ use tokio::{
 };
 use url::Url;
 
-const END_OF_HTTP_HEADER: &[u8] = "\r\n\r\n".as_bytes();
+const END_OF_HTTP_HEADER: &str = "\r\n\r\n";
+
+const END_OF_HTTP_HEADER_LINE: &str = "\r\n";
 
 /* 16 kibi-bytes will occupy half of l1d on a typical x86_64 core */
 pub const BUFFER_SIZE: usize = 16384;
@@ -175,14 +177,12 @@ impl HttpRequestHeader {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
+        let filter = END_OF_HTTP_HEADER.as_bytes();
 
-        while !buffer.ends_with(END_OF_HTTP_HEADER) {
+        while !buffer.ends_with(filter) {
             match time::timeout(
                 Duration::from_secs(10),
-                value.read_until(
-                    END_OF_HTTP_HEADER[END_OF_HTTP_HEADER.len() - 1],
-                    &mut buffer,
-                ),
+                value.read_until(filter[filter.len() - 1], &mut buffer),
             )
             .await
             {
@@ -201,7 +201,10 @@ impl HttpRequestHeader {
         }
 
         let header = String::from_utf8_lossy(&buffer);
-        let lines: Vec<String> = header.split("\r\n").map(|s| s.to_string()).collect();
+        let lines: Vec<String> = header
+            .split(END_OF_HTTP_HEADER_LINE)
+            .map(|s| s.to_string())
+            .collect();
         let mandatory_line = match lines.first() {
             None => return None,
             Some(s) => s,
@@ -259,10 +262,10 @@ impl HttpRequestHeader {
         );
         for (key, value) in &self.headers {
             if !key.trim().is_empty() && !value.trim().is_empty() {
-                str.push_str(&format!("\r\n{key}: {value}"))
+                str.push_str(&format!("{END_OF_HTTP_HEADER_LINE}{key}: {value}"))
             }
         }
-        str.push_str("\r\n\r\n");
+        str.push_str(END_OF_HTTP_HEADER);
         str
     }
 }
@@ -412,7 +415,7 @@ impl HttpResponseStatus {
         let code = self.0;
         let str = self.to_description().to_uppercase();
         let date = httpdate::fmt_http_date(SystemTime::now());
-        format!("HTTP/1.1 {code} {str}\r\nDate: {date}")
+        format!("HTTP/1.1 {code} {str}{END_OF_HTTP_HEADER_LINE}Date: {date}")
     }
 
     pub fn to_response(&self) -> String {
@@ -422,7 +425,7 @@ impl HttpResponseStatus {
         let state = msg.to_uppercase();
         let date = httpdate::fmt_http_date(SystemTime::now());
 
-        format!("HTTP/1.1 {code} {state}\r\nDate: {date}\r\nContent-length: {len}\r\n\r\n{msg}")
+        format!("HTTP/1.1 {code} {state}{END_OF_HTTP_HEADER_LINE}Date: {date}{END_OF_HTTP_HEADER_LINE}Content-length: {len}{END_OF_HTTP_HEADER}{msg}")
     }
 }
 
@@ -452,7 +455,7 @@ fn consume_http_header(value: &mut BufReader<&mut TcpStream>) {
     if let Some(pos) = value
         .buffer()
         .windows(END_OF_HTTP_HEADER.len())
-        .position(|window| window == END_OF_HTTP_HEADER)
+        .position(|window| window == END_OF_HTTP_HEADER.as_bytes())
     {
         value.consume(pos + END_OF_HTTP_HEADER.len());
     }
@@ -472,14 +475,12 @@ impl HttpResponseHeader {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
+        let filter = END_OF_HTTP_HEADER.as_bytes();
 
-        while !buffer.ends_with(END_OF_HTTP_HEADER) {
+        while !buffer.ends_with(filter) {
             match time::timeout(
                 Duration::from_secs(1),
-                value.read_until(
-                    END_OF_HTTP_HEADER[END_OF_HTTP_HEADER.len() - 1],
-                    &mut buffer,
-                ),
+                value.read_until(filter[filter.len() - 1], &mut buffer),
             )
             .await
             {
@@ -498,7 +499,10 @@ impl HttpResponseHeader {
         }
 
         let headers = String::from_utf8_lossy(&buffer);
-        let lines: Vec<String> = headers.split("\r\n").map(|s| s.to_string()).collect();
+        let lines: Vec<String> = headers
+            .split(END_OF_HTTP_HEADER_LINE)
+            .map(|s| s.to_string())
+            .collect();
         let mandatory_line = match lines.first() {
             None => return None,
             Some(s) => s,
@@ -529,10 +533,10 @@ impl HttpResponseHeader {
         let mut str = self.status.to_header();
         for (key, value) in &self.headers {
             if !key.trim().is_empty() && !value.trim().is_empty() {
-                str.push_str(&format!("\r\n{key}: {value}"));
+                str.push_str(&format!("{END_OF_HTTP_HEADER_LINE}{key}: {value}"));
             }
         }
-        str.push_str("\r\n\r\n");
+        str.push_str(END_OF_HTTP_HEADER);
         str
     }
 
