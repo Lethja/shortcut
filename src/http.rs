@@ -568,3 +568,18 @@ impl HttpResponseHeader {
         Some(path)
     }
 }
+
+pub fn url_is_http(url: &Url) -> Option<String> {
+    if url.scheme() != "http" {
+        return None;
+    }
+
+    let host = match url.host() {
+        None => return None,
+        Some(s) => s,
+    };
+
+    let port = url.port_or_known_default().unwrap_or(80);
+
+    Some(format!("{host}:{port}"))
+}

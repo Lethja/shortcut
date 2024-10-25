@@ -1,6 +1,9 @@
 mod http;
 
-use crate::http::{get_cache_name, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion, BUFFER_SIZE};
+use crate::http::{
+    get_cache_name, url_is_http, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader,
+    HttpResponseStatus, HttpVersion, BUFFER_SIZE,
+};
 use std::{collections::HashMap, path::PathBuf};
 use tokio::{
     fs::{create_dir_all, File},
@@ -8,7 +11,6 @@ use tokio::{
     join,
     net::{TcpListener, TcpStream},
 };
-use url::Url;
 
 #[tokio::main]
 async fn main() {
@@ -265,19 +267,4 @@ async fn handle_connection(mut stream: TcpStream) {
             }
         }
     }
-}
-
-fn url_is_http(url: &Url) -> Option<String> {
-    if url.scheme() != "http" {
-        return None;
-    }
-
-    let host = match url.host() {
-        None => return None,
-        Some(s) => s,
-    };
-
-    let port = url.port_or_known_default().unwrap_or(80);
-
-    Some(format!("{host}:{port}"))
 }
