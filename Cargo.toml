@@ -1,14 +1,31 @@
 [package]
 name = "rproxy"
-edition = "2021"
+version = "0.1.0"
+edition = "2018"
 publish = false
 
-[dependencies]
-tokio = { version = "1", default-features = false, features = ["fs", "io-util", "net", "macros", "rt-multi-thread", "time"] }
-url = { version = "2", default-features = false }
-httpdate = { version = "1", default-features = false }
+[dependencies.httpdate]
+version = "1"
+default-features = false
+
+[dependencies.tokio]
+version = "1"
+default-features = false
+features = [
+    "fs",
+    "io-util",
+    "net",
+    "macros",
+    "rt-multi-thread",
+    "time"
+]
+
+[dependencies.url]
+version = "2"
+default-features = false
 
 [profile.release]
 debug = false
 panic = "abort"
 strip = true
+opt-level = 3
