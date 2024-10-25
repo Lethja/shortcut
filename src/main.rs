@@ -1,17 +1,37 @@
 mod http;
 
-use crate::http::{HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus};
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
+use crate::http::{
+    get_cache_name, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus,
+    HttpVersion,
+};
+use std::{collections::HashMap, path::PathBuf};
 use tokio::{
-    io::{AsyncWriteExt, BufReader},
+    fs::{create_dir_all, File},
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
     join,
     net::{TcpListener, TcpStream},
 };
-use url::{Host, Url};
+use url::Url;
 
 #[tokio::main]
 async fn main() {
+    match std::env::var("X_CACHE_PROXY_PATH") {
+        Ok(s) => {
+            let path = PathBuf::from(&s);
+            if !path.exists() {
+                if let Err(e) = create_dir_all(&path).await {
+                    eprintln!("Failed to create directory: {e}");
+                    return;
+                }
+            }
+            drop(s)
+        }
+        Err(_) => {
+            eprintln!("\"X_CACHE_PROXY_PATH\" has not been set");
+            return;
+        }
+    };
+
     let listener = match TcpListener::bind("0.0.0.0:3142").await {
         Ok(l) => l,
         Err(e) => {
@@ -43,9 +63,6 @@ async fn handle_connection(mut stream: TcpStream) {
             Some(header) => header,
         };
 
-    #[cfg(debug_assertions)]
-    println!("header = {:?}", client_request_header.generate());
-
     if let HttpRequestMethod::Get = client_request_header.method {
         if client_request_header.has_relative_path() {
             match client_request_header.get_query() {
@@ -73,48 +90,64 @@ async fn handle_connection(mut stream: TcpStream) {
                 Some(h) => h.to_string(),
             };
 
-            let mut fetch_stream = match TcpStream::connect(host).await {
-                Ok(s) => s,
-                Err(_) => {
-                    let response = HttpResponseStatus::BAD_GATEWAY.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
-                    return;
-                }
+            let cache_file_path = match get_cache_name(&client_request_header.path).await {
+                None => return,
+                Some(p) => p,
             };
 
-            let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
+            if cache_file_path.exists() {
+                let mut file = match File::open(cache_file_path).await {
+                    Ok(f) => f,
+                    Err(_) => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                        stream
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_default();
+                        return;
+                    }
+                };
 
-            let fetch_request = HttpRequestHeader {
-                method: HttpRequestMethod::Get,
-                path: client_request_header.path.clone(),
-                version: client_request_header.version,
-                headers: {
-                    let mut headers = client_request_header.headers.clone();
-                    headers.remove("Range");
-                    headers
-                },
-            };
+                let metadata = match file.metadata().await {
+                    Ok(m) => m,
+                    Err(_) => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                        stream
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_default();
+                        return;
+                    }
+                };
 
-            match fetch_buf_reader
-                .write_all(fetch_request.generate().as_ref())
-                .await
-            {
-                Ok(_) => {}
-                Err(_) => {
-                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
+                let mut headers = HashMap::<String, String>::new();
+                headers.insert(String::from("Content-Length"), metadata.len().to_string());
+
+                let mut header = HttpResponseHeader {
+                    status: HttpResponseStatus::OK,
+                    headers,
+                    version: HttpVersion::HTTP_V11,
+                };
+
+                let header = header.generate();
+                let _ = stream.write_all(header.as_ref()).await;
+                let mut buffer = vec![0; 8192];
+
+                loop {
+                    match file.read(&mut buffer).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if stream.write_all(&buffer[..n]).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
                 }
-            }
-
-            let mut fetch_response_header =
-                match HttpResponseHeader::from_tcp_buffer_async(&mut fetch_buf_reader).await {
-                    None => {
+            } else {
+                let mut fetch_stream = match TcpStream::connect(&host).await {
+                    Ok(s) => s,
+                    Err(_) => {
                         let response = HttpResponseStatus::BAD_GATEWAY.to_response();
                         stream
                             .write_all(response.as_bytes())
@@ -122,58 +155,113 @@ async fn handle_connection(mut stream: TcpStream) {
                             .unwrap_or_default();
                         return;
                     }
-                    Some(s) => s,
                 };
 
-            let fetch_response_header_data = fetch_response_header.generate();
-            match stream
-                .write_all(fetch_response_header_data.as_bytes())
-                .await
-            {
-                Ok(_) => {}
-                Err(_) => return,
-            }
+                let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
 
-            if fetch_response_header.status.to_code() == 200 {
-                let path = match fetch_response_header
-                    .get_cache_name(&client_request_header.path)
+                let fetch_request = HttpRequestHeader {
+                    method: HttpRequestMethod::Get,
+                    path: client_request_header.path.clone(),
+                    version: client_request_header.version,
+                    headers: {
+                        let mut headers = client_request_header.headers.clone();
+                        headers.remove("Range"); /* Not cached so need to download from start */
+                        headers
+                    },
+                };
+
+                let fetch_request_data = fetch_request.generate();
+
+                match fetch_buf_reader
+                    .write_all(fetch_request_data.as_bytes())
+                    .await
                 {
-                    None => {
-                        let response =
-                            HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                    Ok(_) => {}
+                    Err(_) => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
                         stream
                             .write_all(response.as_bytes())
                             .await
                             .unwrap_or_default();
-                        return;
                     }
-                    Some(p) => p,
-                };
-                let mut file = match File::create(path).await {
+                }
+
+                let mut fetch_response_header =
+                    match HttpResponseHeader::from_tcp_buffer_async(&mut fetch_buf_reader).await {
+                        None => {
+                            let response = HttpResponseStatus::BAD_GATEWAY.to_response();
+                            stream
+                                .write_all(response.as_bytes())
+                                .await
+                                .unwrap_or_default();
+                            return;
+                        }
+                        Some(s) => s,
+                    };
+
+                let fetch_response_header_data = fetch_response_header.generate();
+                match stream
+                    .write_all(fetch_response_header_data.as_bytes())
+                    .await
+                {
+                    Ok(_) => {}
                     Err(_) => return,
-                    Ok(file) => file,
-                };
+                }
 
-                let mut buffer = vec![0; 8192]; // Adjust buffer size as needed
-
-                loop {
-                    match fetch_buf_reader.read(&mut buffer).await {
-                        Ok(0) => {
-                            // Connection closed
-                            break;
+                if fetch_response_header.status.to_code() == 200 {
+                    let cache_file_parent = match cache_file_path.parent() {
+                        None => {
+                            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                            stream
+                                .write_all(response.as_bytes())
+                                .await
+                                .unwrap_or_default();
+                            return;
                         }
-                        Ok(n) => {
-                            // Process received binary data
-                            let data = &buffer[..n];
-
-                            let file_write_future = file.write_all(data);
-                            let client_write_future = stream.write_all(data);
-
-                            let _ =  join!(file_write_future, client_write_future);
+                        Some(p) => p,
+                    };
+                    match create_dir_all(cache_file_parent).await {
+                        Ok(_) => {}
+                        Err(_) => {
+                            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                            stream
+                                .write_all(response.as_bytes())
+                                .await
+                                .unwrap_or_default();
                         }
-                        Err(e) => {
-                            eprintln!("Error: {}", e);
-                            break;
+                    }
+                    let mut file = match File::create(cache_file_path).await {
+                        Err(_) => {
+                            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                            stream
+                                .write_all(response.as_bytes())
+                                .await
+                                .unwrap_or_default();
+                            return;
+                        }
+                        Ok(file) => file,
+                    };
+
+                    let mut buffer = vec![0; 8192]; // Adjust buffer size as needed
+
+                    loop {
+                        match fetch_buf_reader.read(&mut buffer).await {
+                            Ok(0) => {
+                                // Connection closed
+                                break;
+                            }
+                            Ok(n) => {
+                                // Process received binary data
+                                let data = &buffer[..n];
+
+                                let file_write_future = file.write_all(data);
+                                let client_write_future = stream.write_all(data);
+
+                                let _ = join!(file_write_future, client_write_future);
+                            }
+                            Err(_) => {
+                                break;
+                            }
                         }
                     }
                 }
@@ -182,7 +270,7 @@ async fn handle_connection(mut stream: TcpStream) {
     }
 }
 
-fn url_is_http(url: &Url) -> Option<Host> {
+fn url_is_http(url: &Url) -> Option<String> {
     if url.scheme() != "http" {
         return None;
     }
@@ -194,10 +282,5 @@ fn url_is_http(url: &Url) -> Option<Host> {
 
     let port = url.port_or_known_default().unwrap_or(80);
 
-    let host = format!("{host}:{port}");
-
-    match Host::parse(host.as_str()) {
-        Ok(h) => Some(h),
-        Err(_) => None,
-    }
+    Some(format!("{host}:{port}"))
 }

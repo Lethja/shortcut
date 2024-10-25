@@ -1,6 +1,12 @@
-use std::path::{Path, PathBuf};
-use std::{collections::HashMap, fmt::Formatter, str::FromStr, time::SystemTime};
+use std::{
+    collections::HashMap,
+    fmt::Formatter,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::SystemTime,
+};
 use tokio::{
+    fs::create_dir_all,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
     time::{self, Duration, Instant},
@@ -133,6 +139,33 @@ fn assemble_mandatory_http_request_header_line(method: &str, path: &str, version
     format!("{method} {path} {version}")
 }
 
+pub async fn get_cache_name(url: &Url) -> Option<PathBuf> {
+    let store_path = match std::env::var("X_CACHE_PROXY_PATH") {
+        Ok(s) => s,
+        Err(e) => {
+            return {
+                eprintln!("{e}");
+                None
+            }
+        }
+    };
+
+    let host = match url.host() {
+        None => "Unknown".to_string(),
+        Some(s) => s.to_string(),
+    };
+
+    let file = PathBuf::from(url.path().to_string());
+    let file = match file.iter().last() {
+        None => return None,
+        Some(s) => s.to_str().map(|s| s.to_string()).unwrap_or_default(),
+    };
+
+    let path = Path::new(&store_path).join(host).join(file);
+
+    Some(path)
+}
+
 #[allow(dead_code)]
 impl HttpRequestHeader {
     pub async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
@@ -218,11 +251,13 @@ impl HttpRequestHeader {
     pub fn generate(&self) -> String {
         let mut str = assemble_mandatory_http_request_header_line(
             self.method.to_string().as_str(),
-            self.path.as_str(),
+            self.path.path(),
             self.version.as_str(),
         );
         for (key, value) in &self.headers {
-            str.push_str(&format!("\r\n{key}: {value}"))
+            if !key.trim().is_empty() && !value.trim().is_empty() {
+                str.push_str(&format!("\r\n{key}: {value}"))
+            }
         }
         str.push_str("\r\n\r\n");
         str
@@ -374,7 +409,7 @@ impl HttpResponseStatus {
         let code = self.0;
         let str = self.to_description().to_uppercase();
         let date = httpdate::fmt_http_date(SystemTime::now());
-        format!("{code} {str}\r\nDate: {date}")
+        format!("HTTP/1.1 {code} {str}\r\nDate: {date}")
     }
 
     pub fn to_response(&self) -> String {
@@ -399,12 +434,12 @@ fn get_http_headers(lines: &[String]) -> HashMap<String, String> {
     let mut headers = HashMap::<String, String>::new();
 
     for line in lines.iter().skip(1) {
-        let mut header = line.splitn(2, '\'');
+        let mut header = line.splitn(2, ':');
         let property = match header.next() {
-            Some(p) => p.to_string(),
+            Some(p) => p.trim().to_string(),
             None => continue,
         };
-        let value = header.next().unwrap_or_default().to_string();
+        let value = header.next().unwrap_or_default().trim().to_string();
         headers.insert(property, value);
     }
     headers
@@ -489,16 +524,28 @@ impl HttpResponseHeader {
         }
 
         let mut str = self.status.to_header();
-        str.push_str("\r\n");
         for (key, value) in &self.headers {
-            str.push_str(&format!("{}: {}\r\n", key, value));
+            if !key.trim().is_empty() && !value.trim().is_empty() {
+                str.push_str(&format!("\r\n{key}: {value}"));
+            }
         }
-        str.push_str("\r\n");
+        str.push_str("\r\n\r\n");
         str
     }
 
-    pub fn get_cache_name(self, url: &Url) -> Option<PathBuf> {
-        let domain = String::from(self.headers.get("Host").unwrap_or(&String::from("Unknown")));
+    pub async fn get_cache_name(self, url: &Url, host: Option<String>) -> Option<PathBuf> {
+        let store_path = match std::env::var("X_CACHE_PROXY_PATH") {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+        let domain = host.unwrap_or("Unknown".to_string());
+
+        let path = Path::new(&store_path).join(domain);
+
+        if !path.exists() && create_dir_all(&path).await.is_err() {
+            return None;
+        }
+
         let filename = match self.headers.get("Content-Disposition") {
             None => match url.path_segments()?.last() {
                 None => return None,
@@ -512,7 +559,9 @@ impl HttpResponseHeader {
             },
             Some(v) => v,
         };
-        let path = Path::new(&domain).join(filename);
+
+        let path = path.join(filename);
+
         Some(path)
     }
 }
