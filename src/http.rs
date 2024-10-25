@@ -15,6 +15,9 @@ use url::Url;
 
 const END_OF_HTTP_HEADER: &[u8] = "\r\n\r\n".as_bytes();
 
+/* 16 kibi-bytes will occupy half of l1d on a typical x86_64 core */
+pub const BUFFER_SIZE: usize = 16384;
+
 pub enum HttpRequestMethod {
     Get,
     Post,
@@ -185,7 +188,7 @@ impl HttpRequestHeader {
             {
                 Ok(Ok(i)) => {
                     buffer_size += i;
-                    if buffer_size >= 8192 {
+                    if buffer_size >= BUFFER_SIZE {
                         return None;
                     }
                 }
@@ -482,7 +485,7 @@ impl HttpResponseHeader {
             {
                 Ok(Ok(i)) => {
                     buffer_size += i;
-                    if buffer_size >= 8192 {
+                    if buffer_size >= BUFFER_SIZE {
                         return None;
                     }
                 }

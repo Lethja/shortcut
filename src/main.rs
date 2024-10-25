@@ -1,9 +1,6 @@
 mod http;
 
-use crate::http::{
-    get_cache_name, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus,
-    HttpVersion,
-};
+use crate::http::{get_cache_name, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion, BUFFER_SIZE};
 use std::{collections::HashMap, path::PathBuf};
 use tokio::{
     fs::{create_dir_all, File},
@@ -131,7 +128,7 @@ async fn handle_connection(mut stream: TcpStream) {
 
                 let header = header.generate();
                 let _ = stream.write_all(header.as_ref()).await;
-                let mut buffer = vec![0; 8192];
+                let mut buffer = vec![0; BUFFER_SIZE];
 
                 loop {
                     match file.read(&mut buffer).await {
@@ -242,7 +239,7 @@ async fn handle_connection(mut stream: TcpStream) {
                         Ok(file) => file,
                     };
 
-                    let mut buffer = vec![0; 8192]; // Adjust buffer size as needed
+                    let mut buffer = vec![0; BUFFER_SIZE]; // Adjust buffer size as needed
 
                     loop {
                         match fetch_buf_reader.read(&mut buffer).await {
