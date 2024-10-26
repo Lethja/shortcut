@@ -166,11 +166,13 @@ async fn handle_connection(mut stream: TcpStream) {
                     if let (Some(start), Some(end)) = (iter.next(), iter.next()) {
                         start_position = start.parse::<u64>().unwrap_or(0);
                         end_position = end.parse::<u64>().unwrap_or(length - 1);
-                        headers.insert(
-                            String::from("Content-Range"),
-                            format!("bytes={start_position}-{end_position}/{length}"),
-                        );
-                        status = HttpResponseStatus::PARTIAL_CONTENT;
+                        if end_position > start_position {
+                            headers.insert(
+                                String::from("Content-Range"),
+                                format!("bytes={start_position}-{end_position}/{length}"),
+                            );
+                            status = HttpResponseStatus::PARTIAL_CONTENT;
+                        }
                     }
                 }
             }
@@ -186,7 +188,7 @@ async fn handle_connection(mut stream: TcpStream) {
         let _ = stream.write_all(header.as_ref()).await;
         let mut buffer = vec![0; BUFFER_SIZE];
         let _ = file.seek(SeekFrom::Start(start_position)).await;
-        let mut bytes: u64 = end_position - start_position;
+        let mut bytes: u64 = end_position - start_position + 1;
 
         while bytes > 0 {
             let bytes_to_read = std::cmp::min(BUFFER_SIZE as u64, bytes) as usize;
