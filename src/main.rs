@@ -61,8 +61,8 @@ async fn main() {
         let (stream, _) = match listener.accept().await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Error: Unable to accept server socket: {e}");
-                return;
+                eprintln!("Error: Unable to accept new connection: {e}");
+                continue
             }
         };
 
@@ -348,20 +348,20 @@ async fn fetch_and_serve_file(
                                     /* The file is in an unknown state and should be removed */
                                     let _ = remove_file(&cache_file_path).await;
                                 }
-                                break;
+                                return;
                             }
                         },
                         (false, true) => match stream.write_all(data).await {
                             Ok(_) => {}
-                            Err(_) => break,
+                            Err(_) => return
                         },
                         (false, false) => {
-                            break;
+                            return
                         }
                     }
                 }
                 Err(_) => {
-                    break;
+                    return
                 }
             }
         }
