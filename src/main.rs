@@ -2,7 +2,7 @@ mod http;
 
 use crate::http::{
     get_cache_name, url_is_http, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader,
-    HttpResponseStatus, HttpVersion, BUFFER_SIZE,
+    HttpResponseStatus, HttpVersion, BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
 use std::{collections::HashMap, path::PathBuf};
 use tokio::{
@@ -14,7 +14,7 @@ use tokio::{
 
 #[tokio::main]
 async fn main() {
-    match std::env::var("X_CACHE_PROXY_PATH") {
+    match std::env::var(X_PROXY_CACHE_PATH) {
         Ok(s) => {
             let path = PathBuf::from(&s);
             if !path.exists() {
@@ -26,7 +26,7 @@ async fn main() {
             drop(s)
         }
         Err(_) => {
-            eprintln!("\"X_CACHE_PROXY_PATH\" has not been set");
+            eprintln!("\"{X_PROXY_CACHE_PATH}\" has not been set");
             return;
         }
     };

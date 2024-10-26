@@ -17,6 +17,8 @@ const END_OF_HTTP_HEADER: &str = "\r\n\r\n";
 
 const END_OF_HTTP_HEADER_LINE: &str = "\r\n";
 
+pub const X_PROXY_CACHE_PATH: &str = "X_PROXY_CACHE_PATH";
+
 /* 16 kibi-bytes will occupy half of l1d on a typical x86_64 core */
 pub const BUFFER_SIZE: usize = 16384;
 
@@ -145,7 +147,7 @@ fn assemble_mandatory_http_request_header_line(method: &str, path: &str, version
 }
 
 pub async fn get_cache_name(url: &Url) -> Option<PathBuf> {
-    let store_path = match std::env::var("X_CACHE_PROXY_PATH") {
+    let store_path = match std::env::var(X_PROXY_CACHE_PATH) {
         Ok(s) => s,
         Err(e) => {
             return {
@@ -541,7 +543,7 @@ impl HttpResponseHeader {
     }
 
     pub async fn get_cache_name(self, url: &Url, host: Option<String>) -> Option<PathBuf> {
-        let store_path = match std::env::var("X_CACHE_PROXY_PATH") {
+        let store_path = match std::env::var(X_PROXY_CACHE_PATH) {
             Ok(s) => s,
             Err(_) => return None,
         };
