@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "rproxy"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "httpdate",
  "tokio",

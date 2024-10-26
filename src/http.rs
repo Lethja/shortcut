@@ -481,7 +481,7 @@ impl HttpResponseHeader {
 
         while !buffer.ends_with(filter) {
             match time::timeout(
-                Duration::from_secs(1),
+                Duration::from_secs(5),
                 value.read_until(filter[filter.len() - 1], &mut buffer),
             )
             .await
@@ -495,7 +495,7 @@ impl HttpResponseHeader {
                 Ok(Err(_)) | Err(_) => return None,
             }
 
-            if begin.elapsed() >= Duration::from_secs(5) {
+            if begin.elapsed() >= Duration::from_secs(10) {
                 return None;
             }
         }

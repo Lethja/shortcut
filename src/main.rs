@@ -4,12 +4,13 @@ use crate::http::{
     get_cache_name, url_is_http, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader,
     HttpResponseStatus, HttpVersion, BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 use tokio::{
     fs::{create_dir_all, remove_file, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
     join,
     net::{TcpListener, TcpStream},
+    time::timeout,
 };
 
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -62,7 +63,7 @@ async fn main() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("Error: Unable to accept new connection: {e}");
-                continue
+                continue;
             }
         };
 
@@ -214,7 +215,8 @@ async fn fetch_and_serve_file(
 ) {
     let mut fetch_stream = match TcpStream::connect(&host).await {
         Ok(s) => s,
-        Err(_) => {
+        Err(e) => {
+            eprintln!("Error: unable to connect to '{host}': {e}");
             let response = HttpResponseStatus::BAD_GATEWAY.to_response();
             stream
                 .write_all(response.as_bytes())
@@ -256,6 +258,7 @@ async fn fetch_and_serve_file(
     let mut fetch_response_header =
         match HttpResponseHeader::from_tcp_buffer_async(&mut fetch_buf_reader).await {
             None => {
+                eprintln!("Error: unable to extract header from '{host}'");
                 let response = HttpResponseStatus::BAD_GATEWAY.to_response();
                 stream
                     .write_all(response.as_bytes())
@@ -353,26 +356,30 @@ async fn fetch_and_serve_file(
                         },
                         (false, true) => match stream.write_all(data).await {
                             Ok(_) => {}
-                            Err(_) => return
+                            Err(_) => return,
                         },
-                        (false, false) => {
-                            return
-                        }
+                        (false, false) => return,
                     }
                 }
-                Err(_) => {
-                    return
-                }
+                Err(_) => return,
             }
+        }
+
+        let _ = timeout(Duration::from_millis(100), fetch_stream.shutdown()).await;
+
+        if write_stream {
+            let _ = timeout(Duration::from_millis(100), stream.shutdown()).await;
         }
 
         if write_file {
             if let Some(last_modified) = fetch_response_header.headers.get("Last-Modified") {
                 if let Ok(last_modified) = httpdate::parse_http_date(last_modified) {
-                    let std_file = file.into_std().await;
-                    let _ = tokio::task::spawn_blocking(move || {
-                        let _ = std_file.set_modified(last_modified);
-                    })
+                    let _ = timeout(
+                        Duration::from_millis(100),
+                        tokio::spawn(async move {
+                            let _ = file.into_std().await.set_modified(last_modified);
+                        }),
+                    )
                     .await;
                 }
             }
