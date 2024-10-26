@@ -4,12 +4,13 @@ use crate::http::{
     get_cache_name, url_is_http, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader,
     HttpResponseStatus, HttpVersion, BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     fs::{create_dir_all, remove_file, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
     join,
     net::{TcpListener, TcpStream},
+    sync::Semaphore,
     time::timeout,
 };
 
@@ -17,6 +18,7 @@ const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const X_PROXY_HTTP_LISTEN_ADDRESS: &str = "X_PROXY_HTTP_LISTEN_ADDRESS";
+const X_PROXY_MAX_CONNECTIONS: &str = "X_PROXY_MAX_CONNECTIONS";
 
 #[tokio::main]
 async fn main() {
@@ -58,6 +60,13 @@ async fn main() {
     };
     drop(bind);
 
+    let max_connections = std::env::var(X_PROXY_MAX_CONNECTIONS)
+        .unwrap_or_else(|_| "16".to_string())
+        .parse()
+        .unwrap_or(16);
+
+    let semaphore = Arc::new(Semaphore::new(max_connections));
+
     loop {
         let (stream, _) = match listener.accept().await {
             Ok(s) => s,
@@ -67,7 +76,11 @@ async fn main() {
             }
         };
 
+        let semaphore = Arc::clone(&semaphore);
+
         tokio::spawn(async move {
+            let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
+
             handle_connection(stream).await;
         });
     }
