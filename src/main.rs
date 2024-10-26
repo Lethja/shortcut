@@ -12,38 +12,56 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
+const PKG_NAME: &str = env!("CARGO_PKG_NAME");
+const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const X_PROXY_LISTEN_ADDRESS: &str = "X_PROXY_LISTEN_ADDRESS";
+
 #[tokio::main]
 async fn main() {
+    eprintln!("{PKG_NAME} version: {PKG_VERSION}");
     match std::env::var(X_PROXY_CACHE_PATH) {
         Ok(s) => {
             let path = PathBuf::from(&s);
             if !path.exists() {
                 if let Err(e) = create_dir_all(&path).await {
-                    eprintln!("Failed to create directory: {e}");
+                    eprintln!("Error: couldn't create directory '{s}': {e}");
                     return;
                 }
             }
-            drop(s)
+            eprintln!("{PKG_NAME} cache path: {s}");
         }
         Err(_) => {
-            eprintln!("\"{X_PROXY_CACHE_PATH}\" has not been set");
+            eprintln!("Error: '{X_PROXY_CACHE_PATH}' has not been set");
             return;
         }
     };
 
-    let listener = match TcpListener::bind("0.0.0.0:3142").await {
-        Ok(l) => l,
+    let bind = std::env::var(X_PROXY_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
+
+    let listener = match TcpListener::bind(&bind).await {
+        Ok(l) => {
+            let details = l.local_addr().unwrap();
+            let address = match details.ip().is_unspecified() {
+                true => "Any".to_string(),
+                false => details.ip().to_string(),
+            };
+            eprintln!("{PKG_NAME} listen address: {}", address);
+            eprintln!("{PKG_NAME} listen port: {}", details.port());
+            l
+        }
         Err(e) => {
-            eprintln!("Unable to bind server: {e}");
+            eprintln!("Error: unable to bind '{bind}': {e}");
             return;
         }
     };
+    drop(bind);
 
     loop {
         let (stream, _) = match listener.accept().await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Unable to accept server socket: {e}");
+                eprintln!("Error: Unable to accept server socket: {e}");
                 return;
             }
         };
@@ -308,7 +326,8 @@ async fn fetch_and_serve_file(
                     let std_file = file.into_std().await;
                     let _ = tokio::task::spawn_blocking(move || {
                         let _ = std_file.set_modified(last_modified);
-                    }).await;
+                    })
+                    .await;
                 }
             }
         }
