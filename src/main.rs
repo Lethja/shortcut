@@ -119,89 +119,89 @@ async fn handle_connection(mut stream: TcpStream) {
             }
         }
     }
+}
 
-    async fn serve_existing_file(
-        cache_file_path: PathBuf,
-        mut stream: TcpStream,
-        client_request_header: HttpRequestHeader,
-    ) {
-        let mut file = match File::open(cache_file_path).await {
-            Ok(f) => f,
-            Err(_) => {
-                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
-                return;
-            }
-        };
+async fn serve_existing_file(
+    cache_file_path: PathBuf,
+    mut stream: TcpStream,
+    client_request_header: HttpRequestHeader,
+) {
+    let mut file = match File::open(cache_file_path).await {
+        Ok(f) => f,
+        Err(_) => {
+            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .unwrap_or_default();
+            return;
+        }
+    };
 
-        let metadata = match file.metadata().await {
-            Ok(m) => m,
-            Err(_) => {
-                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
-                return;
-            }
-        };
+    let metadata = match file.metadata().await {
+        Ok(m) => m,
+        Err(_) => {
+            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .unwrap_or_default();
+            return;
+        }
+    };
 
-        let length = metadata.len();
-        let mut start_position: u64 = 0;
-        let mut end_position: u64 = length - 1;
+    let length = metadata.len();
+    let mut start_position: u64 = 0;
+    let mut end_position: u64 = length - 1;
 
-        let mut status = HttpResponseStatus::OK;
-        let mut headers = HashMap::<String, String>::new();
-        headers.insert(String::from("Content-Length"), metadata.len().to_string());
+    let mut status = HttpResponseStatus::OK;
+    let mut headers = HashMap::<String, String>::new();
+    headers.insert(String::from("Content-Length"), metadata.len().to_string());
 
-        match client_request_header.headers.get("Range") {
-            None => {}
-            Some(range) => {
-                let range = range.trim();
-                if let Some(bytes) = range.strip_prefix("bytes=") {
-                    let mut iter = bytes.split('-');
-                    if let (Some(start), Some(end)) = (iter.next(), iter.next()) {
-                        start_position = start.parse::<u64>().unwrap_or(0);
-                        end_position = end.parse::<u64>().unwrap_or(length - 1);
-                        if end_position > start_position {
-                            headers.insert(
-                                String::from("Content-Range"),
-                                format!("bytes={start_position}-{end_position}/{length}"),
-                            );
-                            status = HttpResponseStatus::PARTIAL_CONTENT;
-                        }
+    match client_request_header.headers.get("Range") {
+        None => {}
+        Some(range) => {
+            let range = range.trim();
+            if let Some(bytes) = range.strip_prefix("bytes=") {
+                let mut iter = bytes.split('-');
+                if let (Some(start), Some(end)) = (iter.next(), iter.next()) {
+                    start_position = start.parse::<u64>().unwrap_or(0);
+                    end_position = end.parse::<u64>().unwrap_or(length - 1);
+                    if end_position > start_position {
+                        headers.insert(
+                            String::from("Content-Range"),
+                            format!("bytes={start_position}-{end_position}/{length}"),
+                        );
+                        status = HttpResponseStatus::PARTIAL_CONTENT;
                     }
                 }
             }
         }
+    }
 
-        let mut header = HttpResponseHeader {
-            status,
-            headers,
-            version: HttpVersion::HTTP_V11,
-        };
+    let mut header = HttpResponseHeader {
+        status,
+        headers,
+        version: HttpVersion::HTTP_V11,
+    };
 
-        let header = header.generate();
-        let _ = stream.write_all(header.as_ref()).await;
-        let mut buffer = vec![0; BUFFER_SIZE];
-        let _ = file.seek(SeekFrom::Start(start_position)).await;
-        let mut bytes: u64 = end_position - start_position + 1;
+    let header = header.generate();
+    let _ = stream.write_all(header.as_ref()).await;
+    let mut buffer = vec![0; BUFFER_SIZE];
+    let _ = file.seek(SeekFrom::Start(start_position)).await;
+    let mut bytes: u64 = end_position - start_position + 1;
 
-        while bytes > 0 {
-            let bytes_to_read = std::cmp::min(BUFFER_SIZE as u64, bytes) as usize;
-            match file.read(&mut buffer[..bytes_to_read]).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    if stream.write_all(&buffer[..n]).await.is_err() {
-                        break;
-                    }
-                    bytes -= n as u64;
+    while bytes > 0 {
+        let bytes_to_read = std::cmp::min(BUFFER_SIZE as u64, bytes) as usize;
+        match file.read(&mut buffer[..bytes_to_read]).await {
+            Ok(0) => break,
+            Ok(n) => {
+                if stream.write_all(&buffer[..n]).await.is_err() {
+                    break;
                 }
-                Err(_) => break,
+                bytes -= n as u64;
             }
+            Err(_) => break,
         }
     }
 }
@@ -348,7 +348,7 @@ async fn fetch_and_serve_file(
                                     /* The file is in an unknown state and should be removed */
                                     let _ = remove_file(&cache_file_path).await;
                                 }
-                                break
+                                break;
                             }
                         },
                         (false, true) => match stream.write_all(data).await {
