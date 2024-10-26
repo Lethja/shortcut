@@ -259,6 +259,9 @@ async fn fetch_and_serve_file(
 
         let mut buffer = vec![0; BUFFER_SIZE]; // Adjust buffer size as needed
 
+        let mut write_file = true;
+        let mut write_stream = true;
+
         loop {
             match fetch_buf_reader.read(&mut buffer).await {
                 Ok(0) => {
@@ -269,10 +272,29 @@ async fn fetch_and_serve_file(
                     // Process received binary data
                     let data = &buffer[..n];
 
-                    let file_write_future = file.write_all(data);
-                    let client_write_future = stream.write_all(data);
+                    match (write_file, write_stream) {
+                        (true, true) => {
+                            let file_write_future = file.write_all(data);
+                            let client_write_future = stream.write_all(data);
 
-                    let _ = join!(file_write_future, client_write_future);
+                            match join!(file_write_future, client_write_future) {
+                                (Err(_), _) => write_file = false,
+                                (_, Err(_)) => write_stream = false,
+                                _ => {}
+                            }
+                        }
+                        (true, false) => match file.write_all(data).await {
+                            Ok(_) => {}
+                            Err(_) => break,
+                        },
+                        (false, true) => match stream.write_all(data).await {
+                            Ok(_) => {}
+                            Err(_) => break,
+                        },
+                        (false, false) => {
+                            break;
+                        }
+                    }
                 }
                 Err(_) => {
                     break;
