@@ -7,7 +7,7 @@ use crate::http::{
 use std::{collections::HashMap, path::PathBuf};
 use tokio::{
     fs::{create_dir_all, File},
-    io::{AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
     join,
     net::{TcpListener, TcpStream},
 };
@@ -113,14 +113,18 @@ async fn handle_connection(mut stream: TcpStream) {
             };
 
             if cache_file_path.exists() {
-                serve_existing_file(cache_file_path, stream).await
+                serve_existing_file(cache_file_path, stream, client_request_header).await
             } else {
                 fetch_and_serve_file(cache_file_path, stream, host, client_request_header).await
             }
         }
     }
 
-    async fn serve_existing_file(cache_file_path: PathBuf, mut stream: TcpStream) {
+    async fn serve_existing_file(
+        cache_file_path: PathBuf,
+        mut stream: TcpStream,
+        client_request_header: HttpRequestHeader,
+    ) {
         let mut file = match File::open(cache_file_path).await {
             Ok(f) => f,
             Err(_) => {
@@ -145,11 +149,35 @@ async fn handle_connection(mut stream: TcpStream) {
             }
         };
 
+        let length = metadata.len();
+        let mut start_position: u64 = 0;
+        let mut end_position: u64 = length - 1;
+
+        let mut status = HttpResponseStatus::OK;
         let mut headers = HashMap::<String, String>::new();
         headers.insert(String::from("Content-Length"), metadata.len().to_string());
 
+        match client_request_header.headers.get("Range") {
+            None => {}
+            Some(range) => {
+                let range = range.trim();
+                if let Some(bytes) = range.strip_prefix("bytes=") {
+                    let mut iter = bytes.split('-');
+                    if let (Some(start), Some(end)) = (iter.next(), iter.next()) {
+                        start_position = start.parse::<u64>().unwrap_or(0);
+                        end_position = end.parse::<u64>().unwrap_or(length - 1);
+                        headers.insert(
+                            String::from("Content-Range"),
+                            format!("bytes={start_position}-{end_position}/{length}"),
+                        );
+                        status = HttpResponseStatus::PARTIAL_CONTENT;
+                    }
+                }
+            }
+        }
+
         let mut header = HttpResponseHeader {
-            status: HttpResponseStatus::OK,
+            status,
             headers,
             version: HttpVersion::HTTP_V11,
         };
@@ -157,14 +185,18 @@ async fn handle_connection(mut stream: TcpStream) {
         let header = header.generate();
         let _ = stream.write_all(header.as_ref()).await;
         let mut buffer = vec![0; BUFFER_SIZE];
+        let _ = file.seek(SeekFrom::Start(start_position)).await;
+        let mut bytes: u64 = end_position - start_position;
 
-        loop {
-            match file.read(&mut buffer).await {
+        while bytes > 0 {
+            let bytes_to_read = std::cmp::min(BUFFER_SIZE as u64, bytes) as usize;
+            match file.read(&mut buffer[..bytes_to_read]).await {
                 Ok(0) => break,
                 Ok(n) => {
                     if stream.write_all(&buffer[..n]).await.is_err() {
                         break;
                     }
+                    bytes -= n as u64;
                 }
                 Err(_) => break,
             }
@@ -331,5 +363,8 @@ async fn fetch_and_serve_file(
                 }
             }
         }
+    } else {
+        let pass_through = fetch_response_header.generate();
+        let _ = stream.write_all(pass_through.as_bytes()).await;
     }
 }
