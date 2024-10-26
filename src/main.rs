@@ -15,7 +15,7 @@ use tokio::{
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const X_PROXY_LISTEN_ADDRESS: &str = "X_PROXY_LISTEN_ADDRESS";
+const X_PROXY_HTTP_LISTEN_ADDRESS: &str = "X_PROXY_HTTP_LISTEN_ADDRESS";
 
 #[tokio::main]
 async fn main() {
@@ -37,7 +37,7 @@ async fn main() {
         }
     };
 
-    let bind = std::env::var(X_PROXY_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
+    let bind = std::env::var(X_PROXY_HTTP_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
 
     let listener = match TcpListener::bind(&bind).await {
         Ok(l) => {
@@ -46,8 +46,8 @@ async fn main() {
                 true => "Any".to_string(),
                 false => details.ip().to_string(),
             };
-            eprintln!("{PKG_NAME} listen address: {}", address);
-            eprintln!("{PKG_NAME} listen port: {}", details.port());
+            eprintln!("{PKG_NAME} HTTP listen address: {}", address);
+            eprintln!("{PKG_NAME} HTTP listen port: {}", details.port());
             l
         }
         Err(e) => {
