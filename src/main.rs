@@ -301,5 +301,16 @@ async fn fetch_and_serve_file(
                 }
             }
         }
+
+        if write_file {
+            if let Some(last_modified) = fetch_response_header.headers.get("Last-Modified") {
+                if let Ok(last_modified) = httpdate::parse_http_date(last_modified) {
+                    let std_file = file.into_std().await;
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let _ = std_file.set_modified(last_modified);
+                    }).await;
+                }
+            }
+        }
     }
 }
