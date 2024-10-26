@@ -6,7 +6,7 @@ use crate::http::{
 };
 use std::{collections::HashMap, path::PathBuf};
 use tokio::{
-    fs::{create_dir_all, File},
+    fs::{create_dir_all, remove_file, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
     join,
     net::{TcpListener, TcpStream},
@@ -297,7 +297,7 @@ async fn fetch_and_serve_file(
                     .unwrap_or_default();
             }
         }
-        let mut file = match File::create(cache_file_path).await {
+        let mut file = match File::create(&cache_file_path).await {
             Err(_) => {
                 let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
                 stream
@@ -330,14 +330,26 @@ async fn fetch_and_serve_file(
                             let client_write_future = stream.write_all(data);
 
                             match join!(file_write_future, client_write_future) {
-                                (Err(_), _) => write_file = false,
+                                (Err(_), _) => {
+                                    write_file = false;
+                                    if cache_file_path.exists() {
+                                        /* The file is in an unknown state and should be removed */
+                                        let _ = remove_file(&cache_file_path).await;
+                                    }
+                                }
                                 (_, Err(_)) => write_stream = false,
                                 _ => {}
                             }
                         }
                         (true, false) => match file.write_all(data).await {
                             Ok(_) => {}
-                            Err(_) => break,
+                            Err(_) => {
+                                if cache_file_path.exists() {
+                                    /* The file is in an unknown state and should be removed */
+                                    let _ = remove_file(&cache_file_path).await;
+                                }
+                                break
+                            }
                         },
                         (false, true) => match stream.write_all(data).await {
                             Ok(_) => {}
