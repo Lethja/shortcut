@@ -282,7 +282,33 @@ async fn fetch_and_serve_file(
             Some(s) => s,
         };
 
+    //TODO: Tolerate chunk encoding
+    let mut content_length = match fetch_response_header.headers.get("Content-Length") {
+        None => {
+            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .unwrap_or_default();
+            return;
+        }
+        Some(s) => {
+            match s.parse::<u64>() {
+                Ok(u) => {u}
+                Err(_) => {
+                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                    stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap_or_default();
+                    return;
+                }
+            }
+        }
+    };
+
     let fetch_response_header_data = fetch_response_header.generate();
+
     match stream
         .write_all(fetch_response_header_data.as_bytes())
         .await
@@ -330,14 +356,17 @@ async fn fetch_and_serve_file(
         let mut write_file = true;
         let mut write_stream = true;
 
+        /* TODO: HTTP content length logic */
         loop {
+            if content_length == 0 {
+                break;
+            }
             match fetch_buf_reader.read(&mut buffer).await {
                 Ok(0) => {
-                    // Connection closed
                     break;
                 }
                 Ok(n) => {
-                    // Process received binary data
+                    content_length -= n as u64;
                     let data = &buffer[..n];
 
                     match (write_file, write_stream) {
