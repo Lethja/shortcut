@@ -283,7 +283,7 @@ async fn fetch_and_serve_file(
         };
 
     //TODO: Tolerate chunk encoding
-    let mut content_length = match fetch_response_header.headers.get("Content-Length") {
+    let content_length = match fetch_response_header.headers.get("Content-Length") {
         None => {
             let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
             stream
@@ -292,19 +292,17 @@ async fn fetch_and_serve_file(
                 .unwrap_or_default();
             return;
         }
-        Some(s) => {
-            match s.parse::<u64>() {
-                Ok(u) => {u}
-                Err(_) => {
-                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
-                    return;
-                }
+        Some(s) => match s.parse::<u64>() {
+            Ok(u) => u,
+            Err(_) => {
+                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap_or_default();
+                return;
             }
-        }
+        },
     };
 
     let fetch_response_header_data = fetch_response_header.generate();
@@ -351,61 +349,14 @@ async fn fetch_and_serve_file(
             Ok(file) => file,
         };
 
-        let mut buffer = vec![0; BUFFER_SIZE]; // Adjust buffer size as needed
-
-        let mut write_file = true;
-        let mut write_stream = true;
-
-        /* TODO: HTTP content length logic */
-        loop {
-            if content_length == 0 {
-                break;
-            }
-            match fetch_buf_reader.read(&mut buffer).await {
-                Ok(0) => {
-                    break;
-                }
-                Ok(n) => {
-                    content_length -= n as u64;
-                    let data = &buffer[..n];
-
-                    match (write_file, write_stream) {
-                        (true, true) => {
-                            let file_write_future = file.write_all(data);
-                            let client_write_future = stream.write_all(data);
-
-                            match join!(file_write_future, client_write_future) {
-                                (Err(_), _) => {
-                                    write_file = false;
-                                    if cache_file_path.exists() {
-                                        /* The file is in an unknown state and should be removed */
-                                        let _ = remove_file(&cache_file_path).await;
-                                    }
-                                }
-                                (_, Err(_)) => write_stream = false,
-                                _ => {}
-                            }
-                        }
-                        (true, false) => match file.write_all(data).await {
-                            Ok(_) => {}
-                            Err(_) => {
-                                if cache_file_path.exists() {
-                                    /* The file is in an unknown state and should be removed */
-                                    let _ = remove_file(&cache_file_path).await;
-                                }
-                                return;
-                            }
-                        },
-                        (false, true) => match stream.write_all(data).await {
-                            Ok(_) => {}
-                            Err(_) => return,
-                        },
-                        (false, false) => return,
-                    }
-                }
-                Err(_) => return,
-            }
-        }
+        let (write_stream, write_file) = fetch_and_server_known_length(
+            cache_file_path,
+            &mut stream,
+            content_length,
+            fetch_buf_reader,
+            &mut file,
+        )
+        .await;
 
         let _ = timeout(Duration::from_millis(100), fetch_stream.shutdown()).await;
 
@@ -430,4 +381,69 @@ async fn fetch_and_serve_file(
         let pass_through = fetch_response_header.generate();
         let _ = stream.write_all(pass_through.as_bytes()).await;
     }
+}
+
+async fn fetch_and_server_known_length(
+    cache_file_path: PathBuf,
+    stream: &mut TcpStream,
+    mut content_length: u64,
+    mut fetch_buf_reader: BufReader<&mut TcpStream>,
+    file: &mut File,
+) -> (bool, bool) {
+    let mut buffer = vec![0; BUFFER_SIZE];
+
+    let mut write_file = true;
+    let mut write_stream = true;
+
+    loop {
+        if content_length == 0 {
+            break;
+        }
+        match fetch_buf_reader.read(&mut buffer).await {
+            Ok(0) => {
+                break;
+            }
+            Ok(n) => {
+                content_length -= n as u64;
+                let data = &buffer[..n];
+
+                match (write_file, write_stream) {
+                    (true, true) => {
+                        let file_write_future = file.write_all(data);
+                        let client_write_future = stream.write_all(data);
+
+                        match join!(file_write_future, client_write_future) {
+                            (Err(_), _) => {
+                                write_file = false;
+                                if cache_file_path.exists() {
+                                    /* The file is in an unknown state and should be removed */
+                                    let _ = remove_file(&cache_file_path).await;
+                                }
+                            }
+                            (_, Err(_)) => write_stream = false,
+                            _ => {}
+                        }
+                    }
+                    (true, false) => match file.write_all(data).await {
+                        Ok(_) => {}
+                        Err(_) => {
+                            if cache_file_path.exists() {
+                                /* The file is in an unknown state and should be removed */
+                                let _ = remove_file(&cache_file_path).await;
+                            }
+                            return (false, false);
+                        }
+                    },
+                    (false, true) => match stream.write_all(data).await {
+                        Ok(_) => {}
+                        Err(_) => return (false, false),
+                    },
+                    (false, false) => return (false, false),
+                }
+            }
+            Err(_) => return (false, false),
+        }
+    }
+
+    (write_file, write_stream)
 }
