@@ -6,10 +6,20 @@ use std::{
     time::SystemTime,
 };
 use tokio::{
-    fs::create_dir_all,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    fs::{
+        remove_file,
+        File,
+        create_dir_all
+    },
+    io::{
+        AsyncReadExt,
+        AsyncBufReadExt,
+        AsyncWriteExt,
+        BufReader
+    },
+    join,
     net::TcpStream,
-    time::{self, Duration, Instant},
+    time::{self, Duration, Instant}
 };
 use url::Url;
 
@@ -76,7 +86,7 @@ impl HttpVersion {
     pub const HTTP_V10: Self = HttpVersion(10);
     pub const HTTP_V11: Self = HttpVersion(11);
 
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         match self.0 {
             10 => "HTTP/1.0",
             11 => "HTTP/1.1",
@@ -84,7 +94,7 @@ impl HttpVersion {
         }
     }
 
-    pub fn from(str: &str) -> Self {
+    pub(crate) fn from(str: &str) -> Self {
         match str {
             "HTTP/1.0" => Self::HTTP_V10,
             "HTTP/1.1" => Self::HTTP_V11,
@@ -146,7 +156,7 @@ fn assemble_mandatory_http_request_header_line(method: &str, path: &str, version
     format!("{method} {path} {version}")
 }
 
-pub async fn get_cache_name(url: &Url) -> Option<PathBuf> {
+pub(crate) async fn get_cache_name(url: &Url) -> Option<PathBuf> {
     let store_path = match std::env::var(X_PROXY_CACHE_PATH) {
         Ok(s) => s,
         Err(e) => {
@@ -175,7 +185,7 @@ pub async fn get_cache_name(url: &Url) -> Option<PathBuf> {
 
 #[allow(dead_code)]
 impl HttpRequestHeader {
-    pub async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
+    pub(crate) async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
@@ -235,28 +245,28 @@ impl HttpRequestHeader {
         })
     }
 
-    pub fn from_tcp_buffer(mut value: BufReader<&mut TcpStream>) -> Option<HttpRequestHeader> {
+    pub(crate) fn from_tcp_buffer(mut value: BufReader<&mut TcpStream>) -> Option<HttpRequestHeader> {
         tokio::runtime::Handle::current()
             .block_on(HttpRequestHeader::from_tcp_buffer_async(&mut value))
     }
 
-    pub fn has_absolute_path(&self) -> bool {
+    pub(crate) fn has_absolute_path(&self) -> bool {
         self.path.has_host()
     }
 
-    pub fn has_relative_path(&self) -> bool {
+    pub(crate) fn has_relative_path(&self) -> bool {
         !self.path.has_host()
     }
 
-    pub fn get_path_without_query(&self) -> String {
+    pub(crate) fn get_path_without_query(&self) -> String {
         self.path.path().to_string()
     }
 
-    pub fn get_query(&self) -> Option<String> {
+    pub(crate) fn get_query(&self) -> Option<String> {
         self.path.query().map(|i| i.to_string())
     }
 
-    pub fn generate(&self) -> String {
+    pub(crate) fn generate(&self) -> String {
         let mut str = assemble_mandatory_http_request_header_line(
             self.method.to_string().as_str(),
             self.path.path(),
@@ -340,7 +350,7 @@ impl HttpResponseStatus {
     pub const NOT_EXTENDED: Self = HttpResponseStatus(510);
     pub const NETWORK_AUTHENTICATION_REQUIRED: Self = HttpResponseStatus(511);
 
-    pub fn to_description(&self) -> &'static str {
+    pub(crate) fn to_description(&self) -> &'static str {
         match self.0 {
             100 => "Continue",
             101 => "Switching Protocols",
@@ -409,18 +419,18 @@ impl HttpResponseStatus {
         }
     }
 
-    pub fn to_code(&self) -> u16 {
+    pub(crate) fn to_code(&self) -> u16 {
         self.0
     }
 
-    pub fn to_header(&self) -> String {
+    pub(crate) fn to_header(&self) -> String {
         let code = self.0;
         let str = self.to_description().to_uppercase();
         let date = httpdate::fmt_http_date(SystemTime::now());
         format!("HTTP/1.1 {code} {str}{END_OF_HTTP_HEADER_LINE}Date: {date}")
     }
 
-    pub fn to_response(&self) -> String {
+    pub(crate) fn to_response(&self) -> String {
         let code = self.0;
         let msg = self.to_description();
         let len = msg.len();
@@ -465,7 +475,7 @@ fn consume_http_header(value: &mut BufReader<&mut TcpStream>) {
 
 #[allow(dead_code)]
 impl HttpResponseHeader {
-    pub fn new(status: HttpResponseStatus) -> Self {
+    pub(crate) fn new(status: HttpResponseStatus) -> Self {
         HttpResponseHeader {
             status,
             headers: Default::default(),
@@ -473,7 +483,7 @@ impl HttpResponseHeader {
         }
     }
 
-    pub async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
+    pub(crate) async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
@@ -524,7 +534,7 @@ impl HttpResponseHeader {
         })
     }
 
-    pub fn generate(&mut self) -> String {
+    pub(crate) fn generate(&mut self) -> String {
         if !self.headers.contains_key("Date") {
             self.headers.insert(
                 String::from("Date"),
@@ -542,7 +552,7 @@ impl HttpResponseHeader {
         str
     }
 
-    pub async fn get_cache_name(self, url: &Url, host: Option<String>) -> Option<PathBuf> {
+    pub(crate) async fn get_cache_name(self, url: &Url, host: Option<String>) -> Option<PathBuf> {
         let store_path = match std::env::var(X_PROXY_CACHE_PATH) {
             Ok(s) => s,
             Err(_) => return None,
@@ -575,7 +585,7 @@ impl HttpResponseHeader {
     }
 }
 
-pub fn url_is_http(url: &Url) -> Option<String> {
+pub(crate) fn url_is_http(url: &Url) -> Option<String> {
     if url.scheme() != "http" {
         return None;
     }
@@ -588,4 +598,69 @@ pub fn url_is_http(url: &Url) -> Option<String> {
     let port = url.port_or_known_default().unwrap_or(80);
 
     Some(format!("{host}:{port}"))
+}
+
+pub(crate) async fn fetch_and_serve_known_length(
+    cache_file_path: PathBuf,
+    stream: &mut TcpStream,
+    mut content_length: u64,
+    mut fetch_buf_reader: BufReader<&mut TcpStream>,
+    file: &mut File,
+) -> (bool, bool) {
+    let mut buffer = vec![0; BUFFER_SIZE];
+
+    let mut write_file = true;
+    let mut write_stream = true;
+
+    loop {
+        if content_length == 0 {
+            break;
+        }
+        match fetch_buf_reader.read(&mut buffer).await {
+            Ok(0) => {
+                break;
+            }
+            Ok(n) => {
+                content_length -= n as u64;
+                let data = &buffer[..n];
+
+                match (write_file, write_stream) {
+                    (true, true) => {
+                        let file_write_future = file.write_all(data);
+                        let client_write_future = stream.write_all(data);
+
+                        match join!(file_write_future, client_write_future) {
+                            (Err(_), _) => {
+                                write_file = false;
+                                if cache_file_path.exists() {
+                                    /* The file is in an unknown state and should be removed */
+                                    let _ = remove_file(&cache_file_path).await;
+                                }
+                            }
+                            (_, Err(_)) => write_stream = false,
+                            _ => {}
+                        }
+                    }
+                    (true, false) => match file.write_all(data).await {
+                        Ok(_) => {}
+                        Err(_) => {
+                            if cache_file_path.exists() {
+                                /* The file is in an unknown state and should be removed */
+                                let _ = remove_file(&cache_file_path).await;
+                            }
+                            return (false, false);
+                        }
+                    },
+                    (false, true) => match stream.write_all(data).await {
+                        Ok(_) => {}
+                        Err(_) => return (false, false),
+                    },
+                    (false, false) => return (false, false),
+                }
+            }
+            Err(_) => return (false, false),
+        }
+    }
+
+    (write_file, write_stream)
 }

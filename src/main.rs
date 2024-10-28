@@ -1,14 +1,14 @@
 mod http;
 
 use crate::http::{
-    get_cache_name, url_is_http, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader,
-    HttpResponseStatus, HttpVersion, BUFFER_SIZE, X_PROXY_CACHE_PATH,
+    fetch_and_serve_known_length, get_cache_name, url_is_http, HttpRequestHeader,
+    HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion, BUFFER_SIZE,
+    X_PROXY_CACHE_PATH,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
-    fs::{create_dir_all, remove_file, File},
+    fs::{create_dir_all, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
-    join,
     net::{TcpListener, TcpStream},
     sync::Semaphore,
     time::timeout,
@@ -282,7 +282,6 @@ async fn fetch_and_serve_file(
             Some(s) => s,
         };
 
-    //TODO: Tolerate chunk encoding
     let content_length = match fetch_response_header.headers.get("Content-Length") {
         None => {
             let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
@@ -295,7 +294,8 @@ async fn fetch_and_serve_file(
         Some(s) => match s.parse::<u64>() {
             Ok(u) => u,
             Err(_) => {
-                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                //TODO: Check for `Transfer-Encoding: chunked`
+                let response = HttpResponseStatus::BAD_REQUEST.to_response();
                 stream
                     .write_all(response.as_bytes())
                     .await
@@ -349,7 +349,7 @@ async fn fetch_and_serve_file(
             Ok(file) => file,
         };
 
-        let (write_stream, write_file) = fetch_and_server_known_length(
+        let (write_stream, write_file) = fetch_and_serve_known_length(
             cache_file_path,
             &mut stream,
             content_length,
@@ -381,69 +381,4 @@ async fn fetch_and_serve_file(
         let pass_through = fetch_response_header.generate();
         let _ = stream.write_all(pass_through.as_bytes()).await;
     }
-}
-
-async fn fetch_and_server_known_length(
-    cache_file_path: PathBuf,
-    stream: &mut TcpStream,
-    mut content_length: u64,
-    mut fetch_buf_reader: BufReader<&mut TcpStream>,
-    file: &mut File,
-) -> (bool, bool) {
-    let mut buffer = vec![0; BUFFER_SIZE];
-
-    let mut write_file = true;
-    let mut write_stream = true;
-
-    loop {
-        if content_length == 0 {
-            break;
-        }
-        match fetch_buf_reader.read(&mut buffer).await {
-            Ok(0) => {
-                break;
-            }
-            Ok(n) => {
-                content_length -= n as u64;
-                let data = &buffer[..n];
-
-                match (write_file, write_stream) {
-                    (true, true) => {
-                        let file_write_future = file.write_all(data);
-                        let client_write_future = stream.write_all(data);
-
-                        match join!(file_write_future, client_write_future) {
-                            (Err(_), _) => {
-                                write_file = false;
-                                if cache_file_path.exists() {
-                                    /* The file is in an unknown state and should be removed */
-                                    let _ = remove_file(&cache_file_path).await;
-                                }
-                            }
-                            (_, Err(_)) => write_stream = false,
-                            _ => {}
-                        }
-                    }
-                    (true, false) => match file.write_all(data).await {
-                        Ok(_) => {}
-                        Err(_) => {
-                            if cache_file_path.exists() {
-                                /* The file is in an unknown state and should be removed */
-                                let _ = remove_file(&cache_file_path).await;
-                            }
-                            return (false, false);
-                        }
-                    },
-                    (false, true) => match stream.write_all(data).await {
-                        Ok(_) => {}
-                        Err(_) => return (false, false),
-                    },
-                    (false, false) => return (false, false),
-                }
-            }
-            Err(_) => return (false, false),
-        }
-    }
-
-    (write_file, write_stream)
 }
