@@ -668,25 +668,38 @@ pub(crate) async fn fetch_and_serve_chunk(
     mut fetch_buf_reader: BufReader<&mut TcpStream>,
     file: &mut File,
 ) -> (bool, bool) {
+
+    async fn fetch_next_chunk_size(buffer: &mut [u8]) -> Option<(u64, usize)> {
+        let size = match String::from_utf8(buffer.to_vec()) {
+            Ok(s) => match u64::from_str_radix(s.trim(), 16) {
+                Ok(value) => value,
+                Err(_) => return None,
+            },
+            Err(_) => return None,
+        };
+
+        let mut skip: usize = 0;
+        for i in 1..=(buffer.len() - END_OF_HTTP_HEADER_LINE.len()) {
+            if &buffer[i..i + END_OF_HTTP_HEADER_LINE.len()] == END_OF_HTTP_HEADER_LINE.as_bytes() {
+                skip = i;
+            }
+        }
+
+        Some((size, skip))
+    }
+
     let filter = END_OF_HTTP_HEADER.as_bytes();
     let mut buffer = vec![0; BUFFER_SIZE];
 
     let mut write_file = true;
     let mut write_stream = true;
-    let mut content_length: u64 = match fetch_buf_reader
+    let (mut content_length, mut skip) = match fetch_buf_reader
         .read_until(filter[filter.len() - 1], &mut buffer)
         .await
     {
-        Ok(u) => match String::from_utf8(buffer[..u].to_vec()) {
-            Ok(s) => match u64::from_str_radix(s.trim(), 16) {
-                Ok(value) => value,
-                Err(_) => {
-                    return (false, false);
-                }
-            },
-            Err(_) => {
-                return (false, false);
-            }
+        Ok(u) => match fetch_next_chunk_size(&mut buffer[..u]).await {
+            Some((length, skip)) => (length, skip),
+            None => return (false, false),
         },
         Err(_) => return (false, false),
     };
@@ -701,19 +714,20 @@ pub(crate) async fn fetch_and_serve_chunk(
             break;
         }
 
-        let min = std::cmp::min(content_length, BUFFER_SIZE as u64);
+        let min = std::cmp::min(content_length as usize, BUFFER_SIZE);
 
         match fetch_buf_reader.read_exact(&mut buffer[..min]).await {
             Ok(0) => {
                 break;
             }
             Ok(n) => {
+                content_length -= n as u64;
                 let data = &buffer[..n];
 
                 match (write_file, write_stream) {
                     (true, true) => {
                         /* TODO: Skip chunk metadata when writing to file */
-                        let file_write_future = file.write_all(data);
+                        let file_write_future = file.write_all(&data[skip..]);
                         let client_write_future = stream.write_all(data);
 
                         match join!(file_write_future, client_write_future) {
