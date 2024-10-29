@@ -661,3 +661,94 @@ pub(crate) async fn fetch_and_serve_known_length(
 
     (write_file, write_stream)
 }
+
+pub(crate) async fn fetch_and_serve_chunk(
+    cache_file_path: PathBuf,
+    stream: &mut TcpStream,
+    mut fetch_buf_reader: BufReader<&mut TcpStream>,
+    file: &mut File,
+) -> (bool, bool) {
+    let filter = END_OF_HTTP_HEADER.as_bytes();
+    let mut buffer = vec![0; BUFFER_SIZE];
+
+    let mut write_file = true;
+    let mut write_stream = true;
+    let mut content_length: u64 = match fetch_buf_reader
+        .read_until(filter[filter.len() - 1], &mut buffer)
+        .await
+    {
+        Ok(u) => match String::from_utf8(buffer[..u].to_vec()) {
+            Ok(s) => match u64::from_str_radix(s.trim(), 16) {
+                Ok(value) => value,
+                Err(_) => {
+                    return (false, false);
+                }
+            },
+            Err(_) => {
+                return (false, false);
+            }
+        },
+        Err(_) => return (false, false),
+    };
+
+    if content_length == 0 {
+        return (true, true);
+    }
+
+    loop {
+        if content_length == 0 {
+            /* TODO: Calculate next chunk */
+            break;
+        }
+
+        let min = std::cmp::min(content_length, BUFFER_SIZE as u64);
+
+        match fetch_buf_reader.read_exact(&mut buffer[..min]).await {
+            Ok(0) => {
+                break;
+            }
+            Ok(n) => {
+                let data = &buffer[..n];
+
+                match (write_file, write_stream) {
+                    (true, true) => {
+                        /* TODO: Skip chunk metadata when writing to file */
+                        let file_write_future = file.write_all(data);
+                        let client_write_future = stream.write_all(data);
+
+                        match join!(file_write_future, client_write_future) {
+                            (Err(_), _) => {
+                                write_file = false;
+                                if cache_file_path.exists() {
+                                    /* The file is in an unknown state and should be removed */
+                                    let _ = remove_file(&cache_file_path).await;
+                                }
+                            }
+                            (_, Err(_)) => write_stream = false,
+                            _ => {}
+                        }
+                    }
+                    /* TODO: Skip chunk metadata when writing to file */
+                    (true, false) => match file.write_all(data).await {
+                        Ok(_) => {}
+                        Err(_) => {
+                            if cache_file_path.exists() {
+                                /* The file is in an unknown state and should be removed */
+                                let _ = remove_file(&cache_file_path).await;
+                            }
+                            return (false, false);
+                        }
+                    },
+                    (false, true) => match stream.write_all(data).await {
+                        Ok(_) => {}
+                        Err(_) => return (false, false),
+                    },
+                    (false, false) => return (false, false),
+                }
+            }
+            Err(_) => return (false, false),
+        }
+    }
+
+    (false, false)
+}
