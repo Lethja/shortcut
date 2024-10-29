@@ -6,20 +6,11 @@ use std::{
     time::SystemTime,
 };
 use tokio::{
-    fs::{
-        remove_file,
-        File,
-        create_dir_all
-    },
-    io::{
-        AsyncReadExt,
-        AsyncBufReadExt,
-        AsyncWriteExt,
-        BufReader
-    },
+    fs::{create_dir_all, remove_file, File},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     join,
     net::TcpStream,
-    time::{self, Duration, Instant}
+    time::{self, Duration, Instant},
 };
 use url::Url;
 
@@ -185,7 +176,9 @@ pub(crate) async fn get_cache_name(url: &Url) -> Option<PathBuf> {
 
 #[allow(dead_code)]
 impl HttpRequestHeader {
-    pub(crate) async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
+    pub(crate) async fn from_tcp_buffer_async(
+        value: &mut BufReader<&mut TcpStream>,
+    ) -> Option<Self> {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
@@ -245,7 +238,9 @@ impl HttpRequestHeader {
         })
     }
 
-    pub(crate) fn from_tcp_buffer(mut value: BufReader<&mut TcpStream>) -> Option<HttpRequestHeader> {
+    pub(crate) fn from_tcp_buffer(
+        mut value: BufReader<&mut TcpStream>,
+    ) -> Option<HttpRequestHeader> {
         tokio::runtime::Handle::current()
             .block_on(HttpRequestHeader::from_tcp_buffer_async(&mut value))
     }
@@ -483,7 +478,9 @@ impl HttpResponseHeader {
         }
     }
 
-    pub(crate) async fn from_tcp_buffer_async(value: &mut BufReader<&mut TcpStream>) -> Option<Self> {
+    pub(crate) async fn from_tcp_buffer_async(
+        value: &mut BufReader<&mut TcpStream>,
+    ) -> Option<Self> {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
