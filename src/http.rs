@@ -668,8 +668,7 @@ pub(crate) async fn fetch_and_serve_chunk(
     mut fetch_buf_reader: BufReader<&mut TcpStream>,
     file: &mut File,
 ) -> (bool, bool) {
-
-    async fn fetch_next_chunk_size(buffer: &mut [u8]) -> Option<(u64, usize)> {
+    async fn fetch_next_chunk_size(buffer: &mut [u8]) -> Option<u64> {
         let size = match String::from_utf8(buffer.to_vec()) {
             Ok(s) => match u64::from_str_radix(s.trim(), 16) {
                 Ok(value) => value,
@@ -678,14 +677,7 @@ pub(crate) async fn fetch_and_serve_chunk(
             Err(_) => return None,
         };
 
-        let mut skip: usize = 0;
-        for i in 1..=(buffer.len() - END_OF_HTTP_HEADER_LINE.len()) {
-            if &buffer[i..i + END_OF_HTTP_HEADER_LINE.len()] == END_OF_HTTP_HEADER_LINE.as_bytes() {
-                skip = i;
-            }
-        }
-
-        Some((size, skip))
+        Some(size)
     }
 
     let filter = END_OF_HTTP_HEADER.as_bytes();
@@ -693,24 +685,75 @@ pub(crate) async fn fetch_and_serve_chunk(
 
     let mut write_file = true;
     let mut write_stream = true;
-    let (mut content_length, mut skip) = match fetch_buf_reader
+
+    let mut content_length = match fetch_buf_reader
         .read_until(filter[filter.len() - 1], &mut buffer)
         .await
     {
-        Ok(u) => match fetch_next_chunk_size(&mut buffer[..u]).await {
-            Some((length, skip)) => (length, skip),
-            None => return (false, false),
-        },
+        Ok(u) => {
+            match stream.write_all(&buffer[..u]).await {
+                Ok(_) => {}
+                Err(_) => write_stream = false,
+            }
+
+            match fetch_next_chunk_size(&mut buffer[..u]).await {
+                Some(length) => {
+                    if length == 0 {
+                        return (true, true);
+                    }
+
+                    length
+                }
+                None => return (false, false),
+            }
+        }
         Err(_) => return (false, false),
     };
 
-    if content_length == 0 {
-        return (true, true);
-    }
-
     loop {
         if content_length == 0 {
-            /* TODO: Calculate next chunk */
+            match fetch_buf_reader.read_exact(&mut buffer[..2]).await {
+                Ok(u) => {
+                    if write_stream {
+                        match stream.write_all(&buffer[..u]).await {
+                            Ok(_) => {}
+                            Err(_) => write_stream = false,
+                        }
+                    }
+
+                    if u != 2 || &buffer[..2] != END_OF_HTTP_HEADER_LINE.as_bytes() {
+                        return (false, false);
+                    }
+
+                    match fetch_buf_reader
+                        .read_until(filter[filter.len() - 1], &mut buffer)
+                        .await
+                    {
+                        Ok(u) => {
+                            if write_stream {
+                                match stream.write_all(&buffer[..u]).await {
+                                    Ok(_) => {}
+                                    Err(_) => write_stream = false,
+                                }
+                            }
+                        }
+                        Err(_) => return (false, false),
+                    }
+                }
+                Err(_) => return (false, false),
+            }
+
+            content_length = match fetch_next_chunk_size(&mut buffer).await {
+                None => return (false, false),
+                Some(length) => {
+                    if length == 0 {
+                        return (true, true);
+                    }
+
+                    length
+                }
+            };
+
             break;
         }
 
@@ -726,8 +769,7 @@ pub(crate) async fn fetch_and_serve_chunk(
 
                 match (write_file, write_stream) {
                     (true, true) => {
-                        /* TODO: Skip chunk metadata when writing to file */
-                        let file_write_future = file.write_all(&data[skip..]);
+                        let file_write_future = file.write_all(data);
                         let client_write_future = stream.write_all(data);
 
                         match join!(file_write_future, client_write_future) {
@@ -742,7 +784,6 @@ pub(crate) async fn fetch_and_serve_chunk(
                             _ => {}
                         }
                     }
-                    /* TODO: Skip chunk metadata when writing to file */
                     (true, false) => match file.write_all(data).await {
                         Ok(_) => {}
                         Err(_) => {
