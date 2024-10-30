@@ -165,6 +165,15 @@ async fn serve_existing_file(
     };
 
     let length = metadata.len();
+    if length == 0 {
+        let response = HttpResponseStatus::NO_CONTENT.to_header();
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .unwrap_or_default();
+        return;
+    }
+
     let mut start_position: u64 = 0;
     let mut end_position: u64 = length - 1;
 
