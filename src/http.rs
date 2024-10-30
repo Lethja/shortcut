@@ -680,17 +680,19 @@ pub(crate) async fn fetch_and_serve_chunk(
         Some(size)
     }
 
-    let filter = END_OF_HTTP_HEADER.as_bytes();
+    let filter_header = END_OF_HTTP_HEADER.as_bytes();
+    let filter_line = END_OF_HTTP_HEADER_LINE.as_bytes();
     let mut buffer = vec![0; BUFFER_SIZE];
 
     let mut write_file = true;
     let mut write_stream = true;
 
     let mut content_length = match fetch_buf_reader
-        .read_until(filter[filter.len() - 1], &mut buffer)
+        .read_until(filter_line[filter_line.len() - 1], &mut buffer)
         .await
     {
         Ok(u) => {
+            eprintln!("{:?}", String::from_utf8_lossy(&buffer[..u]));
             match stream.write_all(&buffer[..u]).await {
                 Ok(_) => {}
                 Err(_) => write_stream = false,
@@ -726,7 +728,7 @@ pub(crate) async fn fetch_and_serve_chunk(
                     }
 
                     match fetch_buf_reader
-                        .read_until(filter[filter.len() - 1], &mut buffer)
+                        .read_until(filter_header[filter_line.len() - 1], &mut buffer)
                         .await
                     {
                         Ok(u) => {
@@ -754,7 +756,7 @@ pub(crate) async fn fetch_and_serve_chunk(
                 }
             };
 
-            break;
+            continue;
         }
 
         let min = std::cmp::min(content_length as usize, BUFFER_SIZE);

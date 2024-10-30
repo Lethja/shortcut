@@ -1,9 +1,9 @@
 mod http;
 
 use crate::http::{
-    fetch_and_serve_known_length, get_cache_name, url_is_http, HttpRequestHeader,
-    HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion, BUFFER_SIZE,
-    X_PROXY_CACHE_PATH,
+    fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, url_is_http,
+    HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
+    BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
@@ -291,29 +291,6 @@ async fn fetch_and_serve_file(
             Some(s) => s,
         };
 
-    let content_length = match fetch_response_header.headers.get("Content-Length") {
-        None => {
-            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-            stream
-                .write_all(response.as_bytes())
-                .await
-                .unwrap_or_default();
-            return;
-        }
-        Some(s) => match s.parse::<u64>() {
-            Ok(u) => u,
-            Err(_) => {
-                //TODO: Check for `Transfer-Encoding: chunked`
-                let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
-                return;
-            }
-        },
-    };
-
     let fetch_response_header_data = fetch_response_header.generate();
 
     match stream
@@ -358,14 +335,53 @@ async fn fetch_and_serve_file(
             Ok(file) => file,
         };
 
-        let (write_stream, write_file) = fetch_and_serve_known_length(
-            cache_file_path,
-            &mut stream,
-            content_length,
-            fetch_buf_reader,
-            &mut file,
-        )
-        .await;
+        let (write_stream, write_file);
+
+        if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
+            if v.to_lowercase() == "chunked" {
+                (write_stream, write_file) =
+                    fetch_and_serve_chunk(cache_file_path, &mut stream, fetch_buf_reader, &mut file)
+                        .await
+            } else {
+                let response = HttpResponseStatus::BAD_REQUEST.to_response();
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap_or_default();
+                return;
+            }
+        } else {
+            let content_length = match fetch_response_header.headers.get("Content-Length") {
+                None => {
+                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                    stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap_or_default();
+                    return;
+                }
+                Some(s) => match s.parse::<u64>() {
+                    Ok(u) => u,
+                    Err(_) => {
+                        let response = HttpResponseStatus::BAD_REQUEST.to_response();
+                        stream
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_default();
+                        return;
+                    }
+                },
+            };
+
+            (write_stream, write_file) = fetch_and_serve_known_length(
+                cache_file_path,
+                &mut stream,
+                content_length,
+                fetch_buf_reader,
+                &mut file,
+            )
+            .await;
+        }
 
         let _ = timeout(Duration::from_millis(100), fetch_stream.shutdown()).await;
 
