@@ -740,74 +740,55 @@ pub(crate) async fn fetch_and_serve_chunk(
     let mut write_file = true;
     let mut write_stream = true;
 
-    let mut content_length = match fetch_buf_reader
-        .read_until(filter_line[filter_line.len() - 1], &mut buffer)
-        .await
-    {
-        Ok(u) => {
-            eprintln!("{:?}", String::from_utf8_lossy(&buffer[..u]));
-            match stream.write_all(&buffer[..u]).await {
-                Ok(_) => {}
-                Err(_) => write_stream = false,
-            }
-
-            match fetch_next_chunk_size(&mut buffer[..u]).await {
-                Some(length) => {
-                    if length == 0 {
-                        return (true, true);
-                    }
-
-                    length
+    let mut content_length =
+        match read_between_patterns(&mut fetch_buf_reader, None, filter_line).await {
+            Some(mut s) => {
+                match stream.write_all(&s).await {
+                    Ok(_) => {}
+                    Err(_) => write_stream = false,
                 }
-                None => return (false, false),
+
+                match fetch_next_chunk_size(s.as_mut_slice()).await {
+                    Some(length) => {
+                        if length == 0 {
+                            let _ = stream.write_all(filter_line).await;
+                            return (true, true);
+                        }
+
+                        length
+                    }
+                    None => return (false, false),
+                }
             }
-        }
-        Err(_) => return (false, false),
-    };
+            None => return (false, false),
+        };
 
     loop {
         if content_length == 0 {
-            match fetch_buf_reader.read_exact(&mut buffer[..2]).await {
-                Ok(u) => {
+            match read_between_patterns(&mut fetch_buf_reader, Some(filter_line), filter_line).await
+            {
+                Some(mut s) => {
                     if write_stream {
-                        match stream.write_all(&buffer[..u]).await {
+                        match stream.write_all(s.as_slice()).await {
                             Ok(_) => {}
                             Err(_) => write_stream = false,
                         }
                     }
 
-                    if u != 2 || &buffer[..2] != END_OF_HTTP_HEADER_LINE.as_bytes() {
-                        return (false, false);
-                    }
-
-                    match fetch_buf_reader
-                        .read_until(filter_header[filter_line.len() - 1], &mut buffer)
-                        .await
-                    {
-                        Ok(u) => {
-                            if write_stream {
-                                match stream.write_all(&buffer[..u]).await {
-                                    Ok(_) => {}
-                                    Err(_) => write_stream = false,
-                                }
+                    content_length = match fetch_next_chunk_size(s.as_mut_slice()).await {
+                        None => return (false, false),
+                        Some(length) => {
+                            if length == 0 {
+                                let _ = stream.write_all(filter_line).await;
+                                return (true, true);
                             }
+
+                            length
                         }
-                        Err(_) => return (false, false),
-                    }
+                    };
                 }
-                Err(_) => return (false, false),
-            }
-
-            content_length = match fetch_next_chunk_size(&mut buffer).await {
                 None => return (false, false),
-                Some(length) => {
-                    if length == 0 {
-                        return (true, true);
-                    }
-
-                    length
-                }
-            };
+            }
 
             continue;
         }
