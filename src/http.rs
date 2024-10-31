@@ -680,7 +680,60 @@ pub(crate) async fn fetch_and_serve_chunk(
         Some(size)
     }
 
-    let filter_header = END_OF_HTTP_HEADER.as_bytes();
+    async fn read_between_patterns(
+        reader: &mut BufReader<&mut TcpStream>,
+        start: Option<&[u8]>,
+        finish: &[u8],
+    ) -> Option<Vec<u8>> {
+        let min = start.map(|s| s.len()).unwrap_or(0) + finish.len();
+        let mut len = 0;
+        let data: &[u8];
+
+        loop {
+            data = match reader.fill_buf().await {
+                Ok(d) => {
+                    if len != d.len() {
+                        len = d.len();
+                    } else {
+                        return None; /* EOF */
+                    }
+
+                    if d.is_empty() || d.len() < min {
+                        continue;
+                    }
+
+                    let mut start_position = 0;
+
+                    if let Some(start) = start {
+                        start_position = d
+                            .windows(start.len())
+                            .position(|window| window == start)
+                            .unwrap_or(0);
+                    }
+
+                    let start_len = start.map_or(0, |s| s.len());
+                    let end_position = match d[start_position + start_len..]
+                        .windows(finish.len())
+                        .position(|window| window == finish)
+                    {
+                        None => continue,
+                        Some(p) => start_position + start_len + p + finish.len(),
+                    };
+
+                    &d[start_position..end_position]
+                }
+                Err(_) => return None,
+            };
+
+            break;
+        }
+
+        let r = Vec::<u8>::from(data);
+        len = data.len();
+        reader.consume(len);
+        Some(r)
+    }
+
     let filter_line = END_OF_HTTP_HEADER_LINE.as_bytes();
     let mut buffer = vec![0; BUFFER_SIZE];
 
