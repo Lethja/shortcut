@@ -668,7 +668,7 @@ pub(crate) async fn fetch_and_serve_chunk(
     mut fetch_buf_reader: BufReader<&mut TcpStream>,
     file: &mut File,
 ) -> (bool, bool) {
-    async fn fetch_next_chunk_size(buffer: &mut [u8]) -> Option<u64> {
+    async fn parse_http_chunk(buffer: &mut [u8]) -> Option<u64> {
         let size = match String::from_utf8(buffer.to_vec()) {
             Ok(s) => match u64::from_str_radix(s.trim(), 16) {
                 Ok(value) => value,
@@ -679,59 +679,40 @@ pub(crate) async fn fetch_and_serve_chunk(
 
         Some(size)
     }
-
-    async fn read_between_patterns(
+    async fn get_http_chunk(
         reader: &mut BufReader<&mut TcpStream>,
-        start: Option<&[u8]>,
-        finish: &[u8],
+        is_start: bool,
     ) -> Option<Vec<u8>> {
-        let min = start.map(|s| s.len()).unwrap_or(0) + finish.len();
-        let mut len = 0;
-        let data: &[u8];
+        let format = END_OF_HTTP_HEADER_LINE.as_bytes();
+        let mut buffer: Vec<u8> = vec![0; BUFFER_SIZE];
 
-        loop {
-            data = match reader.fill_buf().await {
-                Ok(d) => {
-                    if len != d.len() {
-                        len = d.len();
-                    } else {
-                        return None; /* EOF */
-                    }
-
-                    if d.is_empty() || d.len() < min {
-                        continue;
-                    }
-
-                    let mut start_position = 0;
-
-                    if let Some(start) = start {
-                        start_position = d
-                            .windows(start.len())
-                            .position(|window| window == start)
-                            .unwrap_or(0);
-                    }
-
-                    let start_len = start.map_or(0, |s| s.len());
-                    let end_position = match d[start_position + start_len..]
-                        .windows(finish.len())
-                        .position(|window| window == finish)
-                    {
-                        None => continue,
-                        Some(p) => start_position + start_len + p + finish.len(),
-                    };
-
-                    &d[start_position..end_position]
+        let mut i: usize = 2;
+        match reader.read(&mut buffer[..i]).await {
+            Ok(d) => {
+                if !is_start && (d != 2 || buffer[0] != format[0] || buffer[1] != format[1]) {
+                    return None;
                 }
-                Err(_) => return None,
-            };
 
-            break;
+                let mut byte = [0u8; 1];
+                while let Ok(d) = reader.read(&mut byte).await {
+                    if d == 0 {
+                        break;
+                    }
+                    buffer[i] = byte[0];
+                    if buffer.len() > 2 && buffer[i - 1] == format[0] && buffer[i] == format[1] {
+                        break;
+                    }
+
+                    if i >= BUFFER_SIZE {
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            Err(_) => return None,
         }
-
-        let r = Vec::<u8>::from(data);
-        len = data.len();
-        reader.consume(len);
-        Some(r)
+        Some(buffer[..i + 1].to_vec())
     }
 
     let filter_line = END_OF_HTTP_HEADER_LINE.as_bytes();
@@ -740,33 +721,31 @@ pub(crate) async fn fetch_and_serve_chunk(
     let mut write_file = true;
     let mut write_stream = true;
 
-    let mut content_length =
-        match read_between_patterns(&mut fetch_buf_reader, None, filter_line).await {
-            Some(mut s) => {
-                match stream.write_all(&s).await {
-                    Ok(_) => {}
-                    Err(_) => write_stream = false,
-                }
-
-                match fetch_next_chunk_size(s.as_mut_slice()).await {
-                    Some(length) => {
-                        if length == 0 {
-                            let _ = stream.write_all(filter_line).await;
-                            return (true, true);
-                        }
-
-                        length
-                    }
-                    None => return (false, false),
-                }
+    let mut content_length = match get_http_chunk(&mut fetch_buf_reader, true).await {
+        Some(mut s) => {
+            match stream.write_all(&s).await {
+                Ok(_) => {}
+                Err(_) => write_stream = false,
             }
-            None => return (false, false),
-        };
+
+            match parse_http_chunk(s.as_mut_slice()).await {
+                Some(length) => {
+                    if length == 0 {
+                        let _ = stream.write_all(filter_line).await;
+                        return (true, true);
+                    }
+
+                    length
+                }
+                None => return (false, false),
+            }
+        }
+        None => return (false, false),
+    };
 
     loop {
         if content_length == 0 {
-            match read_between_patterns(&mut fetch_buf_reader, Some(filter_line), filter_line).await
-            {
+            match get_http_chunk(&mut fetch_buf_reader, false).await {
                 Some(mut s) => {
                     if write_stream {
                         match stream.write_all(s.as_slice()).await {
@@ -775,7 +754,7 @@ pub(crate) async fn fetch_and_serve_chunk(
                         }
                     }
 
-                    content_length = match fetch_next_chunk_size(s.as_mut_slice()).await {
+                    content_length = match parse_http_chunk(s.as_mut_slice()).await {
                         None => return (false, false),
                         Some(length) => {
                             if length == 0 {
