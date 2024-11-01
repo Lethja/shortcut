@@ -1,5 +1,9 @@
+#[cfg(all(feature = "pnet_datalink", feature = "rcgen"))]
+mod cert;
 mod http;
 
+#[cfg(all(feature = "pnet_datalink", feature = "rcgen"))]
+use crate::cert::check_or_create_tls;
 use crate::http::{
     fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, url_is_http,
     HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
@@ -39,6 +43,11 @@ async fn main() {
             return;
         }
     };
+
+    #[cfg(all(feature = "pnet_datalink", feature = "rcgen"))]
+    {
+        check_or_create_tls();
+    }
 
     let bind = std::env::var(X_PROXY_HTTP_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
 

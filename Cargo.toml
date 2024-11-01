@@ -6,11 +6,28 @@ publish = false
 
 [features]
 default = []
-tls = ["tokio-rustls"]
+https = ["pnet", "pnet_datalink", "rcgen", "tokio-rustls"]
 
 [dependencies.httpdate]
 version = "1"
 default-features = false
+
+[dependencies.pnet]
+default-features = false
+optional = true
+version = "0.35.0"
+features = ["std"]
+
+[dependencies.pnet_datalink]
+default-features = false
+optional = true
+version = "0.35.0"
+
+[dependencies.rcgen]
+default-features = false
+optional = true
+version = "0.13.1"
+features = ["crypto", "pem", "ring"]
 
 [dependencies.tokio]
 version = "1"
