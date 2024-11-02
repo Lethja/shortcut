@@ -1,8 +1,8 @@
-#[cfg(all(feature = "pnet_datalink", feature = "rcgen"))]
+#[cfg(feature = "https")]
 mod cert;
 mod http;
 
-#[cfg(all(feature = "pnet_datalink", feature = "rcgen"))]
+#[cfg(feature = "https")]
 use crate::cert::check_or_create_tls;
 use crate::http::{
     fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, url_is_http,
@@ -44,10 +44,8 @@ async fn main() {
         }
     };
 
-    #[cfg(all(feature = "pnet_datalink", feature = "rcgen"))]
-    {
-        check_or_create_tls();
-    }
+    #[cfg(feature = "https")]
+    let (cert, _) = check_or_create_tls();
 
     let bind = std::env::var(X_PROXY_HTTP_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
 
@@ -86,16 +84,23 @@ async fn main() {
         };
 
         let semaphore = Arc::clone(&semaphore);
+        #[cfg(feature = "https")]
+        let cert = PathBuf::from(&cert);
 
         tokio::spawn(async move {
             let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
 
-            handle_connection(stream).await;
+            handle_connection(
+                stream,
+                #[cfg(feature = "https")]
+                cert,
+            )
+            .await;
         });
     }
 }
 
-async fn handle_connection(mut stream: TcpStream) {
+async fn handle_connection(mut stream: TcpStream, #[cfg(feature = "https")] cert: PathBuf) {
     let mut client_buf_reader = BufReader::new(&mut stream);
     let client_request_header =
         match HttpRequestHeader::from_tcp_buffer_async(&mut client_buf_reader).await {
@@ -106,6 +111,7 @@ async fn handle_connection(mut stream: TcpStream) {
     if let HttpRequestMethod::Get = client_request_header.method {
         if client_request_header.has_relative_path() {
             match client_request_header.get_query() {
+                #[cfg(feature = "https")]
                 None => {
                     let response = HttpResponseStatus::NO_CONTENT.to_header();
                     stream
@@ -113,12 +119,25 @@ async fn handle_connection(mut stream: TcpStream) {
                         .await
                         .unwrap_or_default();
                 }
-                Some(_q) => {
-                    todo!("If query is certs offer the certificate")
+                #[cfg(feature = "https")]
+                Some(q) => {
+                    if q == "cert" {
+                        if cert.is_file() {
+                            serve_existing_file(cert, stream, client_request_header).await;
+                        }
+                    }
+                }
+                #[cfg(not(feature = "https"))]
+                _ => {
+                    let response = HttpResponseStatus::NO_CONTENT.to_header();
+                    stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap_or_default();
                 }
             };
         } else {
-            let host = match url_is_http(&client_request_header.path) {
+            let host = match url_is_http(&client_request_header) {
                 None => {
                     let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
                     stream
@@ -130,7 +149,7 @@ async fn handle_connection(mut stream: TcpStream) {
                 Some(h) => h.to_string(),
             };
 
-            let cache_file_path = match get_cache_name(&client_request_header.path).await {
+            let cache_file_path = match get_cache_name(&client_request_header).await {
                 None => return,
                 Some(p) => p,
             };
@@ -261,7 +280,7 @@ async fn fetch_and_serve_file(
 
     let fetch_request = HttpRequestHeader {
         method: HttpRequestMethod::Get,
-        path: client_request_header.path.clone(),
+        path: client_request_header.get_path_without_query().to_string(),
         version: client_request_header.version,
         headers: {
             let mut headers = client_request_header.headers.clone();

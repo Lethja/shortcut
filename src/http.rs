@@ -2,17 +2,15 @@ use std::{
     collections::HashMap,
     fmt::Formatter,
     path::{Path, PathBuf},
-    str::FromStr,
     time::SystemTime,
 };
 use tokio::{
-    fs::{create_dir_all, remove_file, File},
+    fs::{remove_file, File},
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     join,
     net::TcpStream,
     time::{self, Duration, Instant},
 };
-use url::Url;
 
 const END_OF_HTTP_HEADER: &str = "\r\n\r\n";
 
@@ -97,14 +95,14 @@ impl HttpVersion {
 #[allow(dead_code)]
 pub struct HttpRequestHeader {
     pub method: HttpRequestMethod,
-    pub path: Url,
+    pub path: String,
     pub version: HttpVersion,
     pub headers: HashMap<String, String>,
 }
 
 fn get_mandatory_http_request_header_line(
     line: &str,
-) -> Option<(HttpRequestMethod, &str, HttpVersion)> {
+) -> Option<(HttpRequestMethod, String, HttpVersion)> {
     let elements: Vec<&str> = line.split_whitespace().collect();
     if elements.len() < 3 {
         return None;
@@ -115,6 +113,8 @@ fn get_mandatory_http_request_header_line(
     if !path.starts_with('/') && !path.contains("://") {
         return None;
     }
+
+    let path = path.to_string();
 
     let version = elements[2];
     let version = match version.to_uppercase().as_str() {
@@ -147,7 +147,7 @@ fn assemble_mandatory_http_request_header_line(method: &str, path: &str, version
     format!("{method} {path} {version}")
 }
 
-pub(crate) async fn get_cache_name(url: &Url) -> Option<PathBuf> {
+pub(crate) async fn get_cache_name(url: &HttpRequestHeader) -> Option<PathBuf> {
     let store_path = match std::env::var(X_PROXY_CACHE_PATH) {
         Ok(s) => s,
         Err(e) => {
@@ -158,15 +158,14 @@ pub(crate) async fn get_cache_name(url: &Url) -> Option<PathBuf> {
         }
     };
 
-    let host = match url.host() {
+    let host = match url.get_host() {
         None => "Unknown".to_string(),
         Some(s) => s.to_string(),
     };
 
-    let file = PathBuf::from(url.path().to_string());
-    let file = match file.iter().last() {
+    let file = match PathBuf::from(url.get_path_without_query()).iter().last() {
         None => return None,
-        Some(s) => s.to_str().map(|s| s.to_string()).unwrap_or_default(),
+        Some(s) => s.to_str().map(|s| s.to_string())?,
     };
 
     let path = Path::new(&store_path).join(host).join(file);
@@ -221,14 +220,7 @@ impl HttpRequestHeader {
         let headers = get_http_headers(&lines);
         consume_http_header(value);
 
-        let path = match Url::from_str(path) {
-            Ok(u) => u,
-            Err(_) => {
-                let error = HttpResponseStatus::BAD_REQUEST.to_response();
-                value.write_all(error.as_bytes()).await.unwrap_or_default();
-                return None;
-            }
-        };
+        /* TODO: validate path as a uri */
 
         Some(HttpRequestHeader {
             method,
@@ -246,25 +238,93 @@ impl HttpRequestHeader {
     }
 
     pub(crate) fn has_absolute_path(&self) -> bool {
-        self.path.has_host()
+        !self.path.starts_with('/')
     }
 
     pub(crate) fn has_relative_path(&self) -> bool {
-        !self.path.has_host()
+        self.path.starts_with('/')
     }
 
-    pub(crate) fn get_path_without_query(&self) -> String {
-        self.path.path().to_string()
+    pub(crate) fn get_scheme(&self) -> Option<&str> {
+        let scheme_divider = self.path.find("://").unwrap_or(0);
+        if scheme_divider == 0 {
+            return None;
+        }
+
+        Some(&self.path[..scheme_divider])
+    }
+
+    pub(crate) fn get_host(&self) -> Option<&str> {
+        if self.path.starts_with('/') {
+            return None;
+        };
+
+        let start = self.path.find("://").map_or(0, |u| u + 3);
+        let finish = self.path[start..].find('/').unwrap_or(self.path.len());
+
+        Some(&self.path[start..start + finish])
+    }
+
+    pub(crate) fn get_port(&self) -> Option<u16> {
+        if self.path.starts_with('/') {
+            return None;
+        }
+
+        let scheme = self.path.find("://").unwrap_or(0);
+        let path = self.path[scheme + 3..]
+            .find('/')
+            .unwrap_or(self.path.len() - 1);
+        let range = &self.path[scheme + 3..path];
+
+        let port = match range.find(':') {
+            None => return None,
+            Some(p) => {
+                let port = match self.path[p..].parse::<u16>() {
+                    Ok(p) => p,
+                    Err(_) => return None,
+                };
+                port
+            }
+        };
+
+        Some(port)
+    }
+
+    pub(crate) fn get_path_without_query(&self) -> &str {
+        let query = match self.path.find('?') {
+            None => self.path.len(),
+            Some(u) => u,
+        };
+
+        let path = match self.path.find('/') {
+            Some(0) => 0usize,
+            Some(mut u) => {
+                if u + 1 < self.path.len() - 2 {
+                    if self.path[u - 1..].find("://").is_some() {
+                        u = u + self.path[u + 2..]
+                            .find('/')
+                            .map_or(self.path.len(), |p| p + 2);
+                    }
+                }
+                u
+            }
+            None => 0,
+        };
+
+        &self.path[path..query]
     }
 
     pub(crate) fn get_query(&self) -> Option<String> {
-        self.path.query().map(|i| i.to_string())
+        match self.path.find('?') {
+            None => None,
+            Some(u) => Some(self.path[u..].to_string()),
+        }
     }
 
     pub(crate) fn generate(&self) -> String {
         let mut str = assemble_mandatory_http_request_header_line(
             self.method.to_string().as_str(),
-            self.path.path(),
+            self.get_path_without_query(),
             self.version.as_str(),
         );
         for (key, value) in &self.headers {
@@ -549,7 +609,8 @@ impl HttpResponseHeader {
         str
     }
 
-    pub(crate) async fn get_cache_name(self, url: &Url, host: Option<String>) -> Option<PathBuf> {
+    /*
+    pub(crate) async fn get_cache_name(self, url: &String, host: Option<String>) -> Option<PathBuf> {
         let store_path = match std::env::var(X_PROXY_CACHE_PATH) {
             Ok(s) => s,
             Err(_) => return None,
@@ -580,19 +641,25 @@ impl HttpResponseHeader {
 
         Some(path)
     }
+    */
 }
 
-pub(crate) fn url_is_http(url: &Url) -> Option<String> {
-    if url.scheme() != "http" {
-        return None;
+pub(crate) fn url_is_http(url: &HttpRequestHeader) -> Option<String> {
+    match url.get_scheme() {
+        None => return None,
+        Some(p) => {
+            if !p.starts_with("http") {
+                return None;
+            }
+        }
     }
 
-    let host = match url.host() {
+    let host = match url.get_host() {
         None => return None,
         Some(s) => s,
     };
 
-    let port = url.port_or_known_default().unwrap_or(80);
+    let port = url.get_port().unwrap_or(80);
 
     Some(format!("{host}:{port}"))
 }

@@ -47,10 +47,6 @@ default-features = false
 version = "0.26.0"
 optional = true
 
-[dependencies.url]
-version = "2"
-default-features = false
-
 [profile.release]
 debug = false
 panic = "abort"
