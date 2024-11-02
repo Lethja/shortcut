@@ -600,40 +600,6 @@ impl HttpResponseHeader {
         str.push_str(END_OF_HTTP_HEADER);
         str
     }
-
-    /*
-    pub(crate) async fn get_cache_name(self, url: &String, host: Option<String>) -> Option<PathBuf> {
-        let store_path = match std::env::var(X_PROXY_CACHE_PATH) {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
-        let domain = host.unwrap_or("Unknown".to_string());
-
-        let path = Path::new(&store_path).join(domain);
-
-        if !path.exists() && create_dir_all(&path).await.is_err() {
-            return None;
-        }
-
-        let filename = match self.headers.get("Content-Disposition") {
-            None => match url.path_segments()?.last() {
-                None => return None,
-                Some(s) => {
-                    if s.contains('.') {
-                        s
-                    } else {
-                        return None;
-                    }
-                }
-            },
-            Some(v) => v,
-        };
-
-        let path = path.join(filename);
-
-        Some(path)
-    }
-    */
 }
 
 pub(crate) fn url_is_http(url: &HttpRequestHeader) -> Option<String> {
