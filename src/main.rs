@@ -3,7 +3,7 @@ mod cert;
 mod http;
 
 #[cfg(feature = "https")]
-use crate::cert::{CERT_QUERY, check_or_create_tls};
+use crate::cert::{check_or_create_tls, CERT_QUERY};
 use crate::http::{
     fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, url_is_http,
     HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
@@ -112,22 +112,11 @@ async fn handle_connection(mut stream: TcpStream, #[cfg(feature = "https")] cert
         if client_request_header.has_relative_path() {
             match client_request_header.get_query() {
                 #[cfg(feature = "https")]
-                None => {
-                    let response = HttpResponseStatus::NO_CONTENT.to_header();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
-                }
-                #[cfg(feature = "https")]
                 Some(q) => {
-                    if q == CERT_QUERY {
-                        if cert.is_file() {
-                            serve_existing_file(cert, stream, client_request_header).await;
-                        }
+                    if q == CERT_QUERY && cert.is_file() {
+                        serve_existing_file(cert, stream, client_request_header).await;
                     }
                 }
-                #[cfg(not(feature = "https"))]
                 _ => {
                     let response = HttpResponseStatus::NO_CONTENT.to_header();
                     stream

@@ -9,7 +9,7 @@ pub const CERT_QUERY: &str = "?cert";
 
 pub(crate) fn check_or_create_tls() -> (PathBuf, PathBuf) {
     fn set_read_only(path: &PathBuf) {
-        match std::fs::metadata(&path) {
+        match std::fs::metadata(path) {
             Ok(m) => {
                 let mut perms = m.permissions();
 

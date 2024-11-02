@@ -278,13 +278,10 @@ impl HttpRequestHeader {
 
         let port = match range.find(':') {
             None => return None,
-            Some(p) => {
-                let port = match self.path[p..].parse::<u16>() {
-                    Ok(p) => p,
-                    Err(_) => return None,
-                };
-                port
-            }
+            Some(p) => match self.path[p..].parse::<u16>() {
+                Ok(p) => p,
+                Err(_) => return None,
+            },
         };
 
         Some(port)
@@ -299,12 +296,10 @@ impl HttpRequestHeader {
         let path = match self.path.find('/') {
             Some(0) => 0usize,
             Some(mut u) => {
-                if u + 1 < self.path.len() - 2 {
-                    if self.path[u - 1..].find("://").is_some() {
-                        u = u + self.path[u + 2..]
-                            .find('/')
-                            .map_or(self.path.len(), |p| p + 2);
-                    }
+                if u + 1 < self.path.len() - 2 && self.path[u - 1..].contains("://") {
+                    u = u + self.path[u + 2..]
+                        .find('/')
+                        .map_or(self.path.len(), |p| p + 2);
                 }
                 u
             }
@@ -315,10 +310,7 @@ impl HttpRequestHeader {
     }
 
     pub(crate) fn get_query(&self) -> Option<String> {
-        match self.path.find('?') {
-            None => None,
-            Some(u) => Some(self.path[u..].to_string()),
-        }
+        self.path.find('?').map(|u| self.path[u..].to_string())
     }
 
     pub(crate) fn generate(&self) -> String {
