@@ -5,6 +5,8 @@ use std::{net::IpAddr, path::PathBuf};
 
 pub const X_PROXY_TLS_PATH: &str = "X_PROXY_TLS_PATH";
 
+pub const CERT_QUERY: &str = "?cert";
+
 pub(crate) fn check_or_create_tls() -> (PathBuf, PathBuf) {
     fn set_read_only(path: &PathBuf) {
         match std::fs::metadata(&path) {
@@ -105,8 +107,9 @@ pub(crate) fn check_or_create_tls() -> (PathBuf, PathBuf) {
 
     eprintln!(
         "rproxy generated key and self-signed certificate in '{}'. \
-        This certificate can be downloaded from the servers '/?cert' path",
-        String::from(path.to_str().unwrap())
+        This certificate can be downloaded from the servers '/{}' path",
+        String::from(path.to_str().unwrap()),
+        CERT_QUERY
     );
 
     (cert_path, key_path)
