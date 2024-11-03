@@ -120,7 +120,7 @@ async fn handle_connection(
                         match &cert.server_path {
                             Some(s) => {
                                 if s.is_file() {
-                                    serve_existing_file(&s, stream, client_request_header).await;
+                                    serve_existing_file(s, stream, client_request_header).await;
                                 } else {
                                     let response = HttpResponseStatus::NO_CONTENT.to_header();
                                     stream

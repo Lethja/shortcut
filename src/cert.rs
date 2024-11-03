@@ -1,6 +1,8 @@
 use crate::http::X_PROXY_CACHE_PATH;
 use pnet::datalink;
 use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rustls::{ClientConfig, RootCertStore};
+use rustls_native_certs::load_native_certs;
 use std::{net::IpAddr, path::PathBuf};
 
 pub const X_PROXY_TLS_PATH: &str = "X_PROXY_TLS_PATH";
@@ -8,7 +10,30 @@ pub const X_PROXY_TLS_PATH: &str = "X_PROXY_TLS_PATH";
 pub const CERT_QUERY: &str = "?cert";
 
 pub(crate) struct CertificateSetup {
+    pub(crate) client_config: ClientConfig,
     pub(crate) server_path: Option<PathBuf>,
+}
+
+fn load_system_certificates() -> ClientConfig {
+    let mut root_store = RootCertStore::empty();
+    let certs = load_native_certs();
+
+    for error in certs.errors {
+        eprintln!("rproxy couldn't load a system certificate: {}", error);
+    }
+
+    for cert in certs.certs {
+        let _ = root_store.add(cert);
+    }
+
+    if root_store.is_empty() {
+        eprintln!("rproxy couldn't load any system certificates");
+        std::process::exit(1);
+    }
+    eprintln!("rproxy loaded {} system certificates", root_store.len());
+    ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth()
 }
 
 fn check_or_create_tls() -> (PathBuf, PathBuf) {
@@ -120,9 +145,11 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
 }
 
 pub(crate) fn setup_certificates() -> CertificateSetup {
+    let certificate = load_system_certificates();
     let (server_path, _) = check_or_create_tls();
 
     CertificateSetup {
+        client_config: certificate,
         server_path: Some(server_path),
     }
 }
