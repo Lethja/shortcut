@@ -3,7 +3,7 @@ mod cert;
 mod http;
 
 #[cfg(feature = "https")]
-use crate::cert::{check_or_create_tls, CERT_QUERY};
+use crate::cert::{setup_certificates, CertificateSetup, CERT_QUERY};
 use crate::http::{
     fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, url_is_http,
     HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
@@ -45,7 +45,7 @@ async fn main() {
     };
 
     #[cfg(feature = "https")]
-    let (cert, _) = check_or_create_tls();
+    let certificates = Arc::new(setup_certificates());
 
     let bind = std::env::var(X_PROXY_HTTP_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
 
@@ -85,7 +85,7 @@ async fn main() {
 
         let semaphore = Arc::clone(&semaphore);
         #[cfg(feature = "https")]
-        let cert = PathBuf::from(&cert);
+        let cert = Arc::clone(&certificates);
 
         tokio::spawn(async move {
             let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
@@ -93,14 +93,17 @@ async fn main() {
             handle_connection(
                 stream,
                 #[cfg(feature = "https")]
-                cert,
+                &cert,
             )
             .await;
         });
     }
 }
 
-async fn handle_connection(mut stream: TcpStream, #[cfg(feature = "https")] cert: PathBuf) {
+async fn handle_connection(
+    mut stream: TcpStream,
+    #[cfg(feature = "https")] cert: &CertificateSetup,
+) {
     let mut client_buf_reader = BufReader::new(&mut stream);
     let client_request_header =
         match HttpRequestHeader::from_tcp_buffer_async(&mut client_buf_reader).await {
@@ -113,8 +116,27 @@ async fn handle_connection(mut stream: TcpStream, #[cfg(feature = "https")] cert
             match client_request_header.get_query() {
                 #[cfg(feature = "https")]
                 Some(q) => {
-                    if q == CERT_QUERY && cert.is_file() {
-                        serve_existing_file(cert, stream, client_request_header).await;
+                    if q == CERT_QUERY {
+                        match &cert.server_path {
+                            Some(s) => {
+                                if s.is_file() {
+                                    serve_existing_file(&s, stream, client_request_header).await;
+                                } else {
+                                    let response = HttpResponseStatus::NO_CONTENT.to_header();
+                                    stream
+                                        .write_all(response.as_bytes())
+                                        .await
+                                        .unwrap_or_default();
+                                }
+                            }
+                            _ => {
+                                let response = HttpResponseStatus::NO_CONTENT.to_header();
+                                stream
+                                    .write_all(response.as_bytes())
+                                    .await
+                                    .unwrap_or_default();
+                            }
+                        }
                     }
                 }
                 _ => {
@@ -144,7 +166,7 @@ async fn handle_connection(mut stream: TcpStream, #[cfg(feature = "https")] cert
             };
 
             if cache_file_path.exists() {
-                serve_existing_file(cache_file_path, stream, client_request_header).await
+                serve_existing_file(&cache_file_path, stream, client_request_header).await
             } else {
                 fetch_and_serve_file(cache_file_path, stream, host, client_request_header).await
             }
@@ -153,7 +175,7 @@ async fn handle_connection(mut stream: TcpStream, #[cfg(feature = "https")] cert
 }
 
 async fn serve_existing_file(
-    cache_file_path: PathBuf,
+    cache_file_path: &PathBuf,
     mut stream: TcpStream,
     client_request_header: HttpRequestHeader,
 ) {

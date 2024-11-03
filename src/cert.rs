@@ -7,7 +7,11 @@ pub const X_PROXY_TLS_PATH: &str = "X_PROXY_TLS_PATH";
 
 pub const CERT_QUERY: &str = "?cert";
 
-pub(crate) fn check_or_create_tls() -> (PathBuf, PathBuf) {
+pub(crate) struct CertificateSetup {
+    pub(crate) server_path: Option<PathBuf>,
+}
+
+fn check_or_create_tls() -> (PathBuf, PathBuf) {
     fn set_read_only(path: &PathBuf) {
         match std::fs::metadata(path) {
             Ok(m) => {
@@ -113,4 +117,12 @@ pub(crate) fn check_or_create_tls() -> (PathBuf, PathBuf) {
     );
 
     (cert_path, key_path)
+}
+
+pub(crate) fn setup_certificates() -> CertificateSetup {
+    let (server_path, _) = check_or_create_tls();
+
+    CertificateSetup {
+        server_path: Some(server_path),
+    }
 }
