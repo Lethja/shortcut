@@ -37,30 +37,23 @@ fn load_system_certificates() -> ClientConfig {
 }
 
 fn check_or_create_tls() -> (PathBuf, PathBuf) {
+    #[cfg(unix)]
     fn set_read_only(path: &PathBuf) {
         match std::fs::metadata(path) {
             Ok(m) => {
-                let mut perms = m.permissions();
-
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    perms.set_mode(0o600);
-                }
-
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::PermissionsExt;
-                    perms.set_readonly(true);
-                }
-
-                let _ = std::fs::set_permissions(path, perms);
+                use std::os::unix::fs::PermissionsExt;
+                m.permissions().set_mode(0o400);
             }
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(1);
             }
         }
+    }
+
+    #[cfg(windows)]
+    fn set_read_only(path: &PathBuf) {
+        todo!("Windows file permission nonsense")
     }
 
     let path = match std::env::var(X_PROXY_TLS_PATH) {
