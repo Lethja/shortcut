@@ -18,6 +18,9 @@ use tokio::{
     time::timeout,
 };
 
+#[cfg(feature = "https")]
+use tokio::select;
+
 pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -142,7 +145,54 @@ async fn listen_for(
     semaphore: &Arc<Semaphore>,
     certificates: &Arc<CertificateSetup>,
 ) {
-    todo!("Implement tokio select variant that establishes a TlsStream if required")
+    select! {
+        accept_http = http_listener.accept() => {
+            match accept_http {
+                Ok((stream, _)) => {
+                    let semaphore = Arc::clone(semaphore);
+                    let cert = Arc::clone(certificates);
+
+                    tokio::spawn(async move {
+                        let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
+
+                        handle_connection(
+                            stream,
+                            &cert,
+                        )
+                        .await;
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Error: Unable to accept new connection: {e}");
+                    return;
+                }
+            }
+        },
+        accept_https = https_listener.accept() => {
+            match accept_https {
+                Ok((stream, _)) => {
+                    let semaphore = Arc::clone(semaphore);
+                    let cert = Arc::clone(certificates);
+
+                    /* TODO: TLS server handshake */
+
+                    tokio::spawn(async move {
+                        let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
+
+                        handle_connection(
+                            stream,
+                            &cert,
+                        )
+                        .await;
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Error: Unable to accept new connection: {e}");
+                    return;
+                }
+            }
+        }
+    }
 }
 
 async fn handle_connection(
