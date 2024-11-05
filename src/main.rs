@@ -117,25 +117,19 @@ async fn handle_connection(
                 #[cfg(feature = "https")]
                 Some(q) => {
                     if q == CERT_QUERY {
-                        match &cert.server_path {
-                            Some(s) => {
-                                if s.is_file() {
-                                    serve_existing_file(s, stream, client_request_header).await;
-                                } else {
-                                    let response = HttpResponseStatus::NO_CONTENT.to_header();
-                                    stream
-                                        .write_all(response.as_bytes())
-                                        .await
-                                        .unwrap_or_default();
-                                }
-                            }
-                            _ => {
-                                let response = HttpResponseStatus::NO_CONTENT.to_header();
-                                stream
-                                    .write_all(response.as_bytes())
-                                    .await
-                                    .unwrap_or_default();
-                            }
+                        if cert.server_cert_path.is_file() {
+                            serve_existing_file(
+                                &cert.server_cert_path,
+                                stream,
+                                client_request_header,
+                            )
+                            .await;
+                        } else {
+                            let response = HttpResponseStatus::NOT_FOUND.to_response();
+                            stream
+                                .write_all(response.as_bytes())
+                                .await
+                                .unwrap_or_default();
                         }
                     }
                 }

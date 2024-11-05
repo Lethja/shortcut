@@ -1,7 +1,11 @@
 use crate::http::X_PROXY_CACHE_PATH;
 use pnet::datalink;
 use rcgen::{generate_simple_self_signed, CertifiedKey};
-use rustls::{ClientConfig, RootCertStore};
+use rustls::{
+    pki_types::pem::PemObject,
+    pki_types::{CertificateDer, PrivateKeyDer},
+    ClientConfig, RootCertStore, ServerConfig,
+};
 use rustls_native_certs::load_native_certs;
 use std::{net::IpAddr, path::PathBuf};
 
@@ -11,7 +15,8 @@ pub const CERT_QUERY: &str = "?cert";
 
 pub(crate) struct CertificateSetup {
     pub(crate) client_config: ClientConfig,
-    pub(crate) server_path: Option<PathBuf>,
+    pub(crate) server_config: ServerConfig,
+    pub(crate) server_cert_path: PathBuf,
 }
 
 fn load_system_certificates() -> ClientConfig {
@@ -34,6 +39,50 @@ fn load_system_certificates() -> ClientConfig {
     ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth()
+}
+
+fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> ServerConfig {
+    let cert = match CertificateDer::from_pem_file(cert_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "rproxy error loading '{}': {}",
+                cert_path.to_str().unwrap_or("?"),
+                e
+            );
+            std::process::exit(1);
+        }
+    };
+
+    let key = match PrivateKeyDer::from_pem_file(key_path) {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!(
+                "rproxy error loading '{}': {}",
+                key_path.to_str().unwrap_or("?"),
+                e
+            );
+            std::process::exit(1);
+        }
+    };
+
+    match ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)
+    {
+        Ok(c) => {
+            eprintln!(
+                "rproxy using server https cert '{}' and key '{}'",
+                cert_path.to_str().unwrap_or("?"),
+                key_path.to_str().unwrap_or("?")
+            );
+            c
+        }
+        Err(e) => {
+            eprintln!("rproxy unable to create server https config: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn check_or_create_tls() -> (PathBuf, PathBuf) {
@@ -138,11 +187,13 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
 }
 
 pub(crate) fn setup_certificates() -> CertificateSetup {
-    let certificate = load_system_certificates();
-    let (server_path, _) = check_or_create_tls();
+    let client_config = load_system_certificates();
+    let (server_cert_path, server_key_path) = check_or_create_tls();
+    let server_config = load_server_certificates(&server_cert_path, &server_key_path);
 
     CertificateSetup {
-        client_config: certificate,
-        server_path: Some(server_path),
+        client_config,
+        server_config,
+        server_cert_path,
     }
 }
