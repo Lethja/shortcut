@@ -1,4 +1,7 @@
-use crate::http::X_PROXY_CACHE_PATH;
+use crate::{
+    PKG_NAME,
+    http::X_PROXY_CACHE_PATH
+};
 use pnet::datalink;
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::{
@@ -24,7 +27,7 @@ fn load_system_certificates() -> ClientConfig {
     let certs = load_native_certs();
 
     for error in certs.errors {
-        eprintln!("rproxy couldn't load a system certificate: {}", error);
+        eprintln!("{PKG_NAME} couldn't load a system certificate: {}", error);
     }
 
     for cert in certs.certs {
@@ -32,10 +35,10 @@ fn load_system_certificates() -> ClientConfig {
     }
 
     if root_store.is_empty() {
-        eprintln!("rproxy couldn't load any system certificates");
+        eprintln!("{PKG_NAME} couldn't load any system certificates");
         std::process::exit(1);
     }
-    eprintln!("rproxy loaded {} system certificates", root_store.len());
+    eprintln!("{PKG_NAME} loaded {} system certificates", root_store.len());
     ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth()
@@ -46,7 +49,7 @@ fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> ServerCo
         Ok(c) => c,
         Err(e) => {
             eprintln!(
-                "rproxy error loading '{}': {}",
+                "{PKG_NAME} error loading '{}': {}",
                 cert_path.to_str().unwrap_or("?"),
                 e
             );
@@ -58,7 +61,7 @@ fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> ServerCo
         Ok(k) => k,
         Err(e) => {
             eprintln!(
-                "rproxy error loading '{}': {}",
+                "{PKG_NAME} error loading '{}': {}",
                 key_path.to_str().unwrap_or("?"),
                 e
             );
@@ -72,14 +75,14 @@ fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> ServerCo
     {
         Ok(c) => {
             eprintln!(
-                "rproxy using server https cert '{}' and key '{}'",
+                "{PKG_NAME} using server https cert '{}' and key '{}'",
                 cert_path.to_str().unwrap_or("?"),
                 key_path.to_str().unwrap_or("?")
             );
             c
         }
         Err(e) => {
-            eprintln!("rproxy unable to create server https config: {e}");
+            eprintln!("{PKG_NAME} unable to create server https config: {e}");
             std::process::exit(1);
         }
     }
@@ -109,7 +112,7 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
         Ok(p) => {
             let path = PathBuf::from(&p);
             if !path.is_dir() {
-                eprintln!("X_PROXY_TLS_PATH ({}) should be set to a directory", p);
+                eprintln!("{PKG_NAME} X_PROXY_TLS_PATH ({}) should be set to a directory", p);
                 std::process::exit(1);
             }
             path
@@ -131,7 +134,7 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
 
     if cert_path.exists() && key_path.exists() {
         eprintln!(
-            "rproxy using existing key and certificate in '{}'",
+            "{PKG_NAME} using existing key and certificate in '{}'",
             path.to_str().unwrap()
         );
         return (cert_path, key_path);
@@ -177,7 +180,7 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
     }
 
     eprintln!(
-        "rproxy generated key and self-signed certificate in '{}'. \
+        "{PKG_NAME} generated key and self-signed certificate in '{}'. \
         This certificate can be downloaded from the servers '/{}' path",
         String::from(path.to_str().unwrap()),
         CERT_QUERY

@@ -18,7 +18,7 @@ use tokio::{
     time::timeout,
 };
 
-const PKG_NAME: &str = env!("CARGO_PKG_NAME");
+pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const X_PROXY_HTTP_LISTEN_ADDRESS: &str = "X_PROXY_HTTP_LISTEN_ADDRESS";
