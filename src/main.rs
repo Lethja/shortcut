@@ -22,6 +22,8 @@ pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const X_PROXY_HTTP_LISTEN_ADDRESS: &str = "X_PROXY_HTTP_LISTEN_ADDRESS";
+#[cfg(feature = "https")]
+const X_PROXY_HTTPS_LISTEN_ADDRESS: &str = "X_PROXY_HTTPS_LISTEN_ADDRESS";
 const X_PROXY_MAX_CONNECTIONS: &str = "X_PROXY_MAX_CONNECTIONS";
 
 #[tokio::main]
@@ -47,9 +49,11 @@ async fn main() {
     #[cfg(feature = "https")]
     let certificates = Arc::new(setup_certificates());
 
-    let bind = std::env::var(X_PROXY_HTTP_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
+    let http_bind = std::env::var(X_PROXY_HTTP_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
+    #[cfg(feature = "https")]
+    let https_bind = std::env::var(X_PROXY_HTTPS_LISTEN_ADDRESS).unwrap_or("[::]:3143".to_string());
 
-    let listener = match TcpListener::bind(&bind).await {
+    let http_listener = match TcpListener::bind(&http_bind).await {
         Ok(l) => {
             let details = l.local_addr().unwrap();
             let address = match details.ip().is_unspecified() {
@@ -61,11 +65,31 @@ async fn main() {
             l
         }
         Err(e) => {
-            eprintln!("Error: unable to bind '{bind}': {e}");
+            eprintln!("Error: unable to bind '{http_bind}': {e}");
             return;
         }
     };
-    drop(bind);
+    drop(http_bind);
+
+    #[cfg(feature = "https")]
+    let https_listener = match TcpListener::bind(&https_bind).await {
+        Ok(l) => {
+            let details = l.local_addr().unwrap();
+            let address = match details.ip().is_unspecified() {
+                true => "Any".to_string(),
+                false => details.ip().to_string(),
+            };
+            eprintln!("{PKG_NAME} HTTPS listen address: {}", address);
+            eprintln!("{PKG_NAME} HTTPS listen port: {}", details.port());
+            l
+        }
+        Err(e) => {
+            eprintln!("Error: unable to bind '{https_bind}': {e}");
+            return;
+        }
+    };
+    #[cfg(feature = "https")]
+    drop(https_bind);
 
     let max_connections = std::env::var(X_PROXY_MAX_CONNECTIONS)
         .unwrap_or_else(|_| "16".to_string())
@@ -75,29 +99,50 @@ async fn main() {
     let semaphore = Arc::new(Semaphore::new(max_connections));
 
     loop {
-        let (stream, _) = match listener.accept().await {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Error: Unable to accept new connection: {e}");
-                continue;
-            }
-        };
-
-        let semaphore = Arc::clone(&semaphore);
-        #[cfg(feature = "https")]
-        let cert = Arc::clone(&certificates);
-
-        tokio::spawn(async move {
-            let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
-
-            handle_connection(
-                stream,
-                #[cfg(feature = "https")]
-                &cert,
-            )
-            .await;
-        });
+        listen_for(
+            &http_listener,
+            #[cfg(feature = "https")]
+            &https_listener,
+            &semaphore,
+            #[cfg(feature = "https")]
+            &certificates,
+        )
+        .await;
     }
+}
+
+#[cfg(not(feature = "https"))]
+async fn listen_for(http_listener: &TcpListener, semaphore: &Arc<Semaphore>) {
+    let (stream, _) = match http_listener.accept().await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error: Unable to accept new connection: {e}");
+            return;
+        }
+    };
+
+    let semaphore = Arc::clone(semaphore);
+
+    tokio::spawn(async move {
+        let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
+
+        handle_connection(
+            stream,
+            #[cfg(feature = "https")]
+            &cert,
+        )
+        .await;
+    });
+}
+
+#[cfg(feature = "https")]
+async fn listen_for(
+    http_listener: &TcpListener,
+    https_listener: &TcpListener,
+    semaphore: &Arc<Semaphore>,
+    certificates: &Arc<CertificateSetup>,
+) {
+    todo!("Implement tokio select variant that establishes a TlsStream if required")
 }
 
 async fn handle_connection(

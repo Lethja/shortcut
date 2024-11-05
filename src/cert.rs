@@ -1,7 +1,4 @@
-use crate::{
-    PKG_NAME,
-    http::X_PROXY_CACHE_PATH
-};
+use crate::{http::X_PROXY_CACHE_PATH, PKG_NAME};
 use pnet::datalink;
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use rustls::{
@@ -112,7 +109,10 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
         Ok(p) => {
             let path = PathBuf::from(&p);
             if !path.is_dir() {
-                eprintln!("{PKG_NAME} X_PROXY_TLS_PATH ({}) should be set to a directory", p);
+                eprintln!(
+                    "{PKG_NAME} X_PROXY_TLS_PATH ({}) should be set to a directory",
+                    p
+                );
                 std::process::exit(1);
             }
             path
