@@ -10,16 +10,20 @@ use crate::http::{
     BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use tokio::io::BufReader;
+#[cfg(feature = "https")]
+use tokio::select;
+#[cfg(feature = "https")]
+use tokio_rustls::TlsAcceptor;
+
 use tokio::{
-    fs::{create_dir_all, File},
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
+    fs::create_dir_all,
+    fs::File,
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
     net::{TcpListener, TcpStream},
     sync::Semaphore,
     time::timeout,
 };
-
-#[cfg(feature = "https")]
-use tokio::select;
 
 pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -101,6 +105,9 @@ async fn main() {
 
     let semaphore = Arc::new(Semaphore::new(max_connections));
 
+    #[cfg(feature = "https")]
+    let acceptor = TlsAcceptor::from(certificates.server_config.clone());
+
     loop {
         listen_for(
             &http_listener,
@@ -109,6 +116,8 @@ async fn main() {
             &semaphore,
             #[cfg(feature = "https")]
             &certificates,
+            #[cfg(feature = "https")]
+            acceptor.clone(),
         )
         .await;
     }
@@ -144,6 +153,7 @@ async fn listen_for(
     https_listener: &TcpListener,
     semaphore: &Arc<Semaphore>,
     certificates: &Arc<CertificateSetup>,
+    acceptor: TlsAcceptor,
 ) {
     select! {
         accept_http = http_listener.accept() => {
@@ -174,10 +184,18 @@ async fn listen_for(
                     let semaphore = Arc::clone(semaphore);
                     let cert = Arc::clone(certificates);
 
-                    /* TODO: TLS server handshake */
+                    let acceptor = acceptor.clone();
 
                     tokio::spawn(async move {
                         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
+
+                        let stream = match acceptor.accept(stream).await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!("{PKG_NAME} couldn't create tls stream: {e}");
+                                return;
+                            }
+                        };
 
                         handle_connection(
                             stream,
@@ -195,10 +213,10 @@ async fn listen_for(
     }
 }
 
-async fn handle_connection(
-    mut stream: TcpStream,
-    #[cfg(feature = "https")] cert: &CertificateSetup,
-) {
+async fn handle_connection<T>(mut stream: T, #[cfg(feature = "https")] cert: &CertificateSetup)
+where
+    T: AsyncReadExt + AsyncWriteExt + Unpin,
+{
     let mut client_buf_reader = BufReader::new(&mut stream);
     let client_request_header =
         match HttpRequestHeader::from_tcp_buffer_async(&mut client_buf_reader).await {
@@ -263,11 +281,13 @@ async fn handle_connection(
     }
 }
 
-async fn serve_existing_file(
+async fn serve_existing_file<T>(
     cache_file_path: &PathBuf,
-    mut stream: TcpStream,
+    mut stream: T,
     client_request_header: HttpRequestHeader,
-) {
+) where
+    T: AsyncReadExt + AsyncWriteExt + Unpin,
+{
     let mut file = match File::open(cache_file_path).await {
         Ok(f) => f,
         Err(_) => {
@@ -357,12 +377,14 @@ async fn serve_existing_file(
     }
 }
 
-async fn fetch_and_serve_file(
+async fn fetch_and_serve_file<T>(
     cache_file_path: PathBuf,
-    mut stream: TcpStream,
+    mut stream: T,
     host: String,
     client_request_header: HttpRequestHeader,
-) {
+) where
+    T: AsyncReadExt + AsyncWriteExt + Unpin,
+{
     let mut fetch_stream = match TcpStream::connect(&host).await {
         Ok(s) => s,
         Err(e) => {
