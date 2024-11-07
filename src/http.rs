@@ -8,7 +8,6 @@ use tokio::{
     fs::{remove_file, File},
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     join,
-    net::TcpStream,
     time::{self, Duration, Instant},
 };
 
@@ -92,7 +91,6 @@ impl HttpVersion {
     }
 }
 
-#[allow(dead_code)]
 pub struct HttpRequestHeader {
     pub method: HttpRequestMethod,
     pub path: String,
@@ -173,9 +171,8 @@ pub(crate) async fn get_cache_name(url: &HttpRequestHeader) -> Option<PathBuf> {
     Some(path)
 }
 
-#[allow(dead_code)]
 impl HttpRequestHeader {
-    pub(crate) async fn from_tcp_buffer_async<T>(value: &mut BufReader<&mut T>) -> Option<Self>
+    pub(crate) async fn from_tcp_buffer_async<T>(value: &mut BufReader<T>) -> Option<Self>
     where
         T: AsyncReadExt + AsyncWriteExt + Unpin,
     {
@@ -231,8 +228,9 @@ impl HttpRequestHeader {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_tcp_buffer<T>(
-        mut value: BufReader<&mut TcpStream>,
+        mut value: BufReader<T>,
     ) -> Option<HttpRequestHeader>
     where
         T: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -241,6 +239,7 @@ impl HttpRequestHeader {
             .block_on(HttpRequestHeader::from_tcp_buffer_async(&mut value))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn has_absolute_path(&self) -> bool {
         !self.path.starts_with('/')
     }
@@ -514,7 +513,7 @@ fn get_http_headers(lines: &[String]) -> HashMap<String, String> {
     headers
 }
 
-fn consume_http_header<T>(value: &mut BufReader<&mut T>)
+fn consume_http_header<T>(value: &mut BufReader<T>)
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
 {
@@ -527,19 +526,11 @@ where
     }
 }
 
-#[allow(dead_code)]
 impl HttpResponseHeader {
-    pub(crate) fn new(status: HttpResponseStatus) -> Self {
-        HttpResponseHeader {
-            status,
-            headers: Default::default(),
-            version: HttpVersion::HTTP_V11,
-        }
-    }
-
-    pub(crate) async fn from_tcp_buffer_async(
-        value: &mut BufReader<&mut TcpStream>,
-    ) -> Option<Self> {
+    pub(crate) async fn from_tcp_buffer_async<T>(value: &mut BufReader<T>) -> Option<Self>
+    where
+        T: AsyncReadExt + AsyncWriteExt + Unpin,
+    {
         let mut buffer = Vec::new();
         let mut buffer_size: usize = 0;
         let begin = Instant::now();
@@ -698,14 +689,15 @@ where
     (write_file, write_stream)
 }
 
-pub(crate) async fn fetch_and_serve_chunk<T>(
+pub(crate) async fn fetch_and_serve_chunk<T, R>(
     cache_file_path: PathBuf,
     stream: &mut T,
-    mut fetch_buf_reader: BufReader<&mut TcpStream>,
+    fetch_buf_reader: &mut BufReader<R>,
     file: &mut File,
 ) -> (bool, bool)
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
+    R: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     async fn parse_http_chunk(buffer: &mut [u8]) -> Option<u64> {
         let size = match String::from_utf8(buffer.to_vec()) {
@@ -718,10 +710,10 @@ where
 
         Some(size)
     }
-    async fn get_http_chunk(
-        reader: &mut BufReader<&mut TcpStream>,
-        is_start: bool,
-    ) -> Option<Vec<u8>> {
+    async fn get_http_chunk<T>(reader: &mut T, is_start: bool) -> Option<Vec<u8>>
+    where
+        T: AsyncBufRead + Unpin,
+    {
         let format = END_OF_HTTP_HEADER_LINE.as_bytes();
         let mut buffer: Vec<u8> = vec![0; BUFFER_SIZE];
 
@@ -760,7 +752,7 @@ where
     let mut write_file = true;
     let mut write_stream = true;
 
-    let mut content_length = match get_http_chunk(&mut fetch_buf_reader, true).await {
+    let mut content_length = match get_http_chunk(fetch_buf_reader, true).await {
         Some(mut s) => {
             match stream.write_all(&s).await {
                 Ok(_) => {}
@@ -784,7 +776,7 @@ where
 
     loop {
         if content_length == 0 {
-            match get_http_chunk(&mut fetch_buf_reader, false).await {
+            match get_http_chunk(fetch_buf_reader, false).await {
                 Some(mut s) => {
                     if write_stream {
                         match stream.write_all(s.as_slice()).await {

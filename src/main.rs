@@ -9,8 +9,12 @@ use crate::http::{
     HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
     BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
+#[cfg(feature = "https")]
+use rustls::pki_types::ServerName;
+#[cfg(feature = "https")]
+use std::convert::TryFrom;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-use tokio::io::{BufReader};
+use tokio::io::BufReader;
 #[cfg(feature = "https")]
 use tokio::select;
 
@@ -165,8 +169,7 @@ async fn listen_for(
                     });
                 }
                 Err(e) => {
-                    eprintln!("Error: Unable to accept new connection: {e}");
-                    return;
+                    eprintln!("Error: Unable to accept new connection: {e}")
                 }
             }
         },
@@ -197,8 +200,7 @@ async fn listen_for(
                     });
                 }
                 Err(e) => {
-                    eprintln!("Error: Unable to accept new connection: {e}");
-                    return;
+                    eprintln!("Error: Unable to accept new connection: {e}")
                 }
             }
         }
@@ -265,9 +267,13 @@ where
             };
 
             if cache_file_path.exists() {
-                serve_existing_file(&cache_file_path, stream, client_request_header).await
+                serve_existing_file(&cache_file_path, stream, client_request_header).await;
             } else {
-                fetch_and_serve_file(cache_file_path, stream, host, client_request_header).await
+                #[cfg(feature = "https")]
+                fetch_and_serve_file(cache_file_path, stream, host, client_request_header, cert)
+                    .await;
+                #[cfg(not(feature = "https"))]
+                fetch_and_serve_file(cache_file_path, stream, host, client_request_header).await;
             }
         }
     }
@@ -374,9 +380,182 @@ async fn fetch_and_serve_file<T>(
     mut stream: T,
     host: String,
     client_request_header: HttpRequestHeader,
+    #[cfg(feature = "https")] certificates: &CertificateSetup,
 ) where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
 {
+    async fn fetch<R, S>(
+        cache_file_path: PathBuf,
+        client_request_header: HttpRequestHeader,
+        host: String,
+        fetch_buf_reader: &mut BufReader<&mut R>,
+        mut stream: &mut S,
+    ) where
+        R: AsyncReadExt + AsyncWriteExt + Unpin,
+        S: AsyncReadExt + AsyncWriteExt + Unpin,
+    {
+        let fetch_request = HttpRequestHeader {
+            method: HttpRequestMethod::Get,
+            path: client_request_header.get_path_without_query().to_string(),
+            version: client_request_header.version,
+            headers: {
+                let mut headers = client_request_header.headers.clone();
+                headers.remove("Range"); /* Not cached so need to download from start */
+                headers
+            },
+        };
+
+        let fetch_request_data = fetch_request.generate();
+
+        match fetch_buf_reader
+            .write_all(fetch_request_data.as_bytes())
+            .await
+        {
+            Ok(_) => {}
+            Err(_) => {
+                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap_or_default();
+            }
+        }
+
+        let mut fetch_response_header =
+            match HttpResponseHeader::from_tcp_buffer_async(fetch_buf_reader).await {
+                None => {
+                    eprintln!("Error: unable to extract header from '{host}'");
+                    let response = HttpResponseStatus::BAD_GATEWAY.to_response();
+                    stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap_or_default();
+                    return;
+                }
+                Some(s) => s,
+            };
+
+        let fetch_response_header_data = fetch_response_header.generate();
+
+        match stream
+            .write_all(fetch_response_header_data.as_bytes())
+            .await
+        {
+            Ok(_) => {}
+            Err(_) => return,
+        }
+
+        if fetch_response_header.status.to_code() == 200 {
+            let cache_file_parent = match cache_file_path.parent() {
+                None => {
+                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                    stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap_or_default();
+                    return;
+                }
+                Some(p) => p,
+            };
+            match create_dir_all(cache_file_parent).await {
+                Ok(_) => {}
+                Err(_) => {
+                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                    stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap_or_default();
+                }
+            }
+            let mut file = match File::create(&cache_file_path).await {
+                Err(_) => {
+                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                    stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap_or_default();
+                    return;
+                }
+                Ok(file) => file,
+            };
+
+            let (write_stream, write_file);
+
+            if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
+                if v.to_lowercase() == "chunked" {
+                    (write_stream, write_file) = fetch_and_serve_chunk(
+                        cache_file_path,
+                        &mut stream,
+                        fetch_buf_reader,
+                        &mut file,
+                    )
+                    .await
+                } else {
+                    let response = HttpResponseStatus::BAD_REQUEST.to_response();
+                    stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .unwrap_or_default();
+                    return;
+                }
+            } else {
+                let content_length = match fetch_response_header.headers.get("Content-Length") {
+                    None => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                        stream
+                            .write_all(response.as_bytes())
+                            .await
+                            .unwrap_or_default();
+                        return;
+                    }
+                    Some(s) => match s.parse::<u64>() {
+                        Ok(u) => u,
+                        Err(_) => {
+                            let response = HttpResponseStatus::BAD_REQUEST.to_response();
+                            stream
+                                .write_all(response.as_bytes())
+                                .await
+                                .unwrap_or_default();
+                            return;
+                        }
+                    },
+                };
+
+                (write_stream, write_file) = fetch_and_serve_known_length(
+                    cache_file_path,
+                    &mut stream,
+                    content_length,
+                    fetch_buf_reader,
+                    &mut file,
+                )
+                .await;
+            }
+
+            //let _ = timeout(Duration::from_millis(100), fetch_stream.shutdown()).await;
+
+            if write_stream {
+                let _ = timeout(Duration::from_millis(100), stream.shutdown()).await;
+            }
+
+            if write_file {
+                if let Some(last_modified) = fetch_response_header.headers.get("Last-Modified") {
+                    if let Ok(last_modified) = httpdate::parse_http_date(last_modified) {
+                        let _ = timeout(
+                            Duration::from_millis(100),
+                            tokio::spawn(async move {
+                                let _ = file.into_std().await.set_modified(last_modified);
+                            }),
+                        )
+                        .await;
+                    }
+                }
+            }
+        } else {
+            let pass_through = fetch_response_header.generate();
+            let _ = stream.write_all(pass_through.as_bytes()).await;
+        }
+    }
+
     let mut fetch_stream = match TcpStream::connect(&host).await {
         Ok(s) => s,
         Err(e) => {
@@ -390,162 +569,52 @@ async fn fetch_and_serve_file<T>(
         }
     };
 
+    #[cfg(feature = "https")]
+    if client_request_header
+        .get_scheme()
+        .is_some_and(|s| s == "https")
+    {
+        let host_str = host.clone();
+
+        let domain = match ServerName::try_from(host_str) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("{PKG_NAME} couldn't domain name: {e}");
+                return;
+            }
+        };
+
+        let mut fetch_stream = match certificates
+            .client_config
+            .connect(domain, fetch_stream)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{PKG_NAME} couldn't establish HTTPS connection to {host}: {e}");
+                return;
+            }
+        };
+
+        let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
+        fetch(
+            cache_file_path,
+            client_request_header,
+            host,
+            &mut fetch_buf_reader,
+            &mut stream,
+        )
+        .await;
+        return;
+    }
+
     let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
-
-    let fetch_request = HttpRequestHeader {
-        method: HttpRequestMethod::Get,
-        path: client_request_header.get_path_without_query().to_string(),
-        version: client_request_header.version,
-        headers: {
-            let mut headers = client_request_header.headers.clone();
-            headers.remove("Range"); /* Not cached so need to download from start */
-            headers
-        },
-    };
-
-    let fetch_request_data = fetch_request.generate();
-
-    match fetch_buf_reader
-        .write_all(fetch_request_data.as_bytes())
-        .await
-    {
-        Ok(_) => {}
-        Err(_) => {
-            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-            stream
-                .write_all(response.as_bytes())
-                .await
-                .unwrap_or_default();
-        }
-    }
-
-    let mut fetch_response_header =
-        match HttpResponseHeader::from_tcp_buffer_async(&mut fetch_buf_reader).await {
-            None => {
-                eprintln!("Error: unable to extract header from '{host}'");
-                let response = HttpResponseStatus::BAD_GATEWAY.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
-                return;
-            }
-            Some(s) => s,
-        };
-
-    let fetch_response_header_data = fetch_response_header.generate();
-
-    match stream
-        .write_all(fetch_response_header_data.as_bytes())
-        .await
-    {
-        Ok(_) => {}
-        Err(_) => return,
-    }
-
-    if fetch_response_header.status.to_code() == 200 {
-        let cache_file_parent = match cache_file_path.parent() {
-            None => {
-                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
-                return;
-            }
-            Some(p) => p,
-        };
-        match create_dir_all(cache_file_parent).await {
-            Ok(_) => {}
-            Err(_) => {
-                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
-            }
-        }
-        let mut file = match File::create(&cache_file_path).await {
-            Err(_) => {
-                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
-                return;
-            }
-            Ok(file) => file,
-        };
-
-        let (write_stream, write_file);
-
-        if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
-            if v.to_lowercase() == "chunked" {
-                (write_stream, write_file) =
-                    fetch_and_serve_chunk(cache_file_path, &mut stream, fetch_buf_reader, &mut file)
-                        .await
-            } else {
-                let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
-                return;
-            }
-        } else {
-            let content_length = match fetch_response_header.headers.get("Content-Length") {
-                None => {
-                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
-                    return;
-                }
-                Some(s) => match s.parse::<u64>() {
-                    Ok(u) => u,
-                    Err(_) => {
-                        let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                        stream
-                            .write_all(response.as_bytes())
-                            .await
-                            .unwrap_or_default();
-                        return;
-                    }
-                },
-            };
-
-            (write_stream, write_file) = fetch_and_serve_known_length(
-                cache_file_path,
-                &mut stream,
-                content_length,
-                fetch_buf_reader,
-                &mut file,
-            )
-            .await;
-        }
-
-        let _ = timeout(Duration::from_millis(100), fetch_stream.shutdown()).await;
-
-        if write_stream {
-            let _ = timeout(Duration::from_millis(100), stream.shutdown()).await;
-        }
-
-        if write_file {
-            if let Some(last_modified) = fetch_response_header.headers.get("Last-Modified") {
-                if let Ok(last_modified) = httpdate::parse_http_date(last_modified) {
-                    let _ = timeout(
-                        Duration::from_millis(100),
-                        tokio::spawn(async move {
-                            let _ = file.into_std().await.set_modified(last_modified);
-                        }),
-                    )
-                    .await;
-                }
-            }
-        }
-    } else {
-        let pass_through = fetch_response_header.generate();
-        let _ = stream.write_all(pass_through.as_bytes()).await;
-    }
+    fetch(
+        cache_file_path,
+        client_request_header,
+        host,
+        &mut fetch_buf_reader,
+        &mut stream,
+    )
+    .await;
 }

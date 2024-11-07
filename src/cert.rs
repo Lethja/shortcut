@@ -15,7 +15,7 @@ pub const X_PROXY_TLS_PATH: &str = "X_PROXY_TLS_PATH";
 pub const CERT_QUERY: &str = "?cert";
 
 pub(crate) struct CertificateSetup {
-    #[allow(dead_code)] pub(crate) client_config: Arc<TlsConnector>,
+    pub(crate) client_config: Arc<TlsConnector>,
     pub(crate) server_config: Arc<TlsAcceptor>,
     pub(crate) server_cert_path: PathBuf,
 }
