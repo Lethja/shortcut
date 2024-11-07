@@ -10,11 +10,9 @@ use crate::http::{
     BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-use tokio::io::BufReader;
+use tokio::io::{BufReader};
 #[cfg(feature = "https")]
 use tokio::select;
-#[cfg(feature = "https")]
-use tokio_rustls::TlsAcceptor;
 
 use tokio::{
     fs::create_dir_all,
@@ -105,9 +103,6 @@ async fn main() {
 
     let semaphore = Arc::new(Semaphore::new(max_connections));
 
-    #[cfg(feature = "https")]
-    let acceptor = TlsAcceptor::from(certificates.server_config.clone());
-
     loop {
         listen_for(
             &http_listener,
@@ -116,8 +111,6 @@ async fn main() {
             &semaphore,
             #[cfg(feature = "https")]
             &certificates,
-            #[cfg(feature = "https")]
-            acceptor.clone(),
         )
         .await;
     }
@@ -153,7 +146,6 @@ async fn listen_for(
     https_listener: &TcpListener,
     semaphore: &Arc<Semaphore>,
     certificates: &Arc<CertificateSetup>,
-    acceptor: TlsAcceptor,
 ) {
     select! {
         accept_http = http_listener.accept() => {
@@ -184,7 +176,7 @@ async fn listen_for(
                     let semaphore = Arc::clone(semaphore);
                     let cert = Arc::clone(certificates);
 
-                    let acceptor = acceptor.clone();
+                    let acceptor = certificates.server_config.clone();
 
                     tokio::spawn(async move {
                         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");

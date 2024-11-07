@@ -8,18 +8,19 @@ use rustls::{
 };
 use rustls_native_certs::load_native_certs;
 use std::{net::IpAddr, path::PathBuf, sync::Arc};
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 pub const X_PROXY_TLS_PATH: &str = "X_PROXY_TLS_PATH";
 
 pub const CERT_QUERY: &str = "?cert";
 
 pub(crate) struct CertificateSetup {
-    pub(crate) client_config: ClientConfig,
-    pub(crate) server_config: Arc<ServerConfig>,
+    #[allow(dead_code)] pub(crate) client_config: Arc<TlsConnector>,
+    pub(crate) server_config: Arc<TlsAcceptor>,
     pub(crate) server_cert_path: PathBuf,
 }
 
-fn load_system_certificates() -> ClientConfig {
+fn load_system_certificates() -> Arc<TlsConnector> {
     let mut root_store = RootCertStore::empty();
     let certs = load_native_certs();
 
@@ -36,12 +37,16 @@ fn load_system_certificates() -> ClientConfig {
         std::process::exit(1);
     }
     eprintln!("{PKG_NAME} loaded {} system certificates", root_store.len());
-    ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth()
+    let config = Arc::new(
+        ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth(),
+    );
+
+    Arc::new(TlsConnector::from(config))
 }
 
-fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> ServerConfig {
+fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> Arc<TlsAcceptor> {
     let cert = match CertificateDer::from_pem_file(cert_path) {
         Ok(c) => c,
         Err(e) => {
@@ -66,7 +71,7 @@ fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> ServerCo
         }
     };
 
-    match ServerConfig::builder()
+    let config = match ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![cert], key)
     {
@@ -82,7 +87,11 @@ fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> ServerCo
             eprintln!("{PKG_NAME} unable to create server https config: {e}");
             std::process::exit(1);
         }
-    }
+    };
+
+    let config = Arc::new(config);
+
+    Arc::new(TlsAcceptor::from(config))
 }
 
 fn check_or_create_tls() -> (PathBuf, PathBuf) {
@@ -192,10 +201,7 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
 pub(crate) fn setup_certificates() -> CertificateSetup {
     let client_config = load_system_certificates();
     let (server_cert_path, server_key_path) = check_or_create_tls();
-    let server_config = Arc::new(load_server_certificates(
-        &server_cert_path,
-        &server_key_path,
-    ));
+    let server_config = load_server_certificates(&server_cert_path, &server_key_path);
 
     CertificateSetup {
         client_config,
