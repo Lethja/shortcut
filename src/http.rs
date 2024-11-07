@@ -8,7 +8,7 @@ use tokio::{
     fs::{remove_file, File},
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     join,
-    time::{self, Duration, Instant},
+    time::{self, timeout, Duration, Instant},
 };
 
 const END_OF_HTTP_HEADER: &str = "\r\n\r\n";
@@ -19,6 +19,7 @@ pub const X_PROXY_CACHE_PATH: &str = "X_PROXY_CACHE_PATH";
 
 /* 16 kibi-bytes will occupy half of l1d on a typical x86_64 core */
 pub const BUFFER_SIZE: usize = 16384;
+const WAIT_TIMEOUT_SECONDS: u64 = 10;
 
 pub enum HttpRequestMethod {
     Get,
@@ -624,7 +625,18 @@ where
         if content_length == 0 {
             break;
         }
-        match fetch_buf_reader.read(&mut buffer).await {
+
+        let fetch = match timeout(
+            Duration::from_secs(WAIT_TIMEOUT_SECONDS),
+            fetch_buf_reader.read(&mut buffer),
+        )
+        .await
+        {
+            Ok(f) => f,
+            Err(_) => return (false, false),
+        };
+
+        match fetch {
             Ok(0) => {
                 break;
             }
@@ -702,7 +714,18 @@ where
         let mut buffer: Vec<u8> = vec![0; BUFFER_SIZE];
 
         let mut i: usize = 2;
-        match reader.read(&mut buffer[..i]).await {
+
+        let read = match timeout(
+            Duration::from_secs(WAIT_TIMEOUT_SECONDS),
+            reader.read(&mut buffer[..i]),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
+
+        match read {
             Ok(d) => {
                 if !is_start && (d != 2 || buffer[0] != format[0] || buffer[1] != format[1]) {
                     return None;
