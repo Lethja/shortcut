@@ -535,13 +535,13 @@ async fn fetch_and_serve_file<T>(
                     cache_file_path,
                     &mut stream,
                     content_length,
-                    fetch_buf_reader,
+                    &mut *fetch_buf_reader,
                     &mut file,
                 )
                 .await;
             }
 
-            //let _ = timeout(Duration::from_millis(100), fetch_stream.shutdown()).await;
+            let _ = timeout(Duration::from_millis(100), fetch_buf_reader.shutdown()).await;
 
             if write_stream {
                 let _ = timeout(Duration::from_millis(100), stream.shutdown()).await;
