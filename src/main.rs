@@ -19,8 +19,7 @@ use tokio::io::BufReader;
 use tokio::select;
 
 use tokio::{
-    fs::create_dir_all,
-    fs::File,
+    fs::{create_dir_all, remove_file, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
     net::{TcpListener, TcpStream},
     sync::Semaphore,
@@ -494,7 +493,7 @@ async fn fetch_and_serve_file<T>(
             if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
                 if v.to_lowercase() == "chunked" {
                     (write_stream, write_file) = fetch_and_serve_chunk(
-                        cache_file_path,
+                        &cache_file_path,
                         &mut stream,
                         fetch_buf_reader,
                         &mut file,
@@ -532,7 +531,7 @@ async fn fetch_and_serve_file<T>(
                 };
 
                 (write_stream, write_file) = fetch_and_serve_known_length(
-                    cache_file_path,
+                    &cache_file_path,
                     &mut stream,
                     content_length,
                     &mut *fetch_buf_reader,
@@ -559,6 +558,9 @@ async fn fetch_and_serve_file<T>(
                         .await;
                     }
                 }
+            } else if cache_file_path.is_file() {
+                /* Something has gone wrong, undefined state */
+                let _ = remove_file(cache_file_path).await;
             }
         } else {
             let pass_through = fetch_response_header.generate();

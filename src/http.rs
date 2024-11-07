@@ -605,7 +605,7 @@ pub(crate) fn url_is_http(url: &HttpRequestHeader) -> Option<String> {
 }
 
 pub(crate) async fn fetch_and_serve_known_length<T, R>(
-    cache_file_path: PathBuf,
+    cache_file_path: &PathBuf,
     stream: &mut T,
     mut content_length: u64,
     mut fetch_buf_reader: R,
@@ -674,7 +674,7 @@ where
 }
 
 pub(crate) async fn fetch_and_serve_chunk<T, R>(
-    cache_file_path: PathBuf,
+    cache_file_path: &PathBuf,
     stream: &mut T,
     fetch_buf_reader: &mut BufReader<R>,
     file: &mut File,
