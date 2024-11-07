@@ -358,6 +358,16 @@ async fn serve_existing_file<T>(
     let _ = stream.write_all(header.as_ref()).await;
     let mut buffer = vec![0; BUFFER_SIZE];
     let _ = file.seek(SeekFrom::Start(start_position)).await;
+
+    if end_position <= start_position {
+        let response = HttpResponseStatus::BAD_REQUEST.to_response();
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .unwrap_or_default();
+        return;
+    }
+
     let mut bytes: u64 = end_position - start_position + 1;
 
     while bytes > 0 {
