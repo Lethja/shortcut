@@ -228,22 +228,6 @@ impl HttpRequestHeader {
         })
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn from_tcp_buffer<T>(
-        mut value: BufReader<T>,
-    ) -> Option<HttpRequestHeader>
-    where
-        T: AsyncReadExt + AsyncWriteExt + Unpin,
-    {
-        tokio::runtime::Handle::current()
-            .block_on(HttpRequestHeader::from_tcp_buffer_async(&mut value))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn has_absolute_path(&self) -> bool {
-        !self.path.starts_with('/')
-    }
-
     pub(crate) fn has_relative_path(&self) -> bool {
         self.path.starts_with('/')
     }
