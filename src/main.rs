@@ -4,8 +4,12 @@ mod http;
 
 #[cfg(feature = "https")]
 use crate::cert::{setup_certificates, CertificateSetup, CERT_QUERY};
+#[cfg(feature = "https")]
+use crate::ConnectionReturn::Upgrade;
 use crate::http::{
-    fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, url_is_http,
+    fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if,
+    url_is_http, ConnectionReturn,
+    ConnectionReturn::{Close, Keep},
     HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
     BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
@@ -121,7 +125,7 @@ async fn main() {
 
 #[cfg(not(feature = "https"))]
 async fn listen_for(http_listener: &TcpListener, semaphore: &Arc<Semaphore>) {
-    let (stream, _) = match http_listener.accept().await {
+    let (mut stream, _) = match http_listener.accept().await {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Error: Unable to accept new connection: {e}");
@@ -134,12 +138,19 @@ async fn listen_for(http_listener: &TcpListener, semaphore: &Arc<Semaphore>) {
     tokio::spawn(async move {
         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
 
-        handle_connection(
-            stream,
-            #[cfg(feature = "https")]
-            &cert,
-        )
-        .await;
+        loop {
+            match handle_connection(
+                &mut stream,
+                #[cfg(feature = "https")]
+                &cert,
+            )
+            .await
+            {
+                Close => break,
+                Keep => continue,
+                ConnectionReturn::Upgrade => {}
+            }
+        }
     });
 }
 
@@ -206,16 +217,27 @@ async fn listen_for(
     }
 }
 
-async fn handle_connection<T>(mut stream: T, #[cfg(feature = "https")] cert: &CertificateSetup)
+async fn handle_connection<T>(
+    mut stream: T,
+    #[cfg(feature = "https")] cert: &CertificateSetup,
+) -> ConnectionReturn
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     let mut client_buf_reader = BufReader::new(&mut stream);
-    let client_request_header =
-        match HttpRequestHeader::from_tcp_buffer_async(&mut client_buf_reader).await {
-            None => return,
+
+    let client_request_header = match timeout(
+        Duration::from_secs(5),
+        HttpRequestHeader::from_tcp_buffer_async(&mut client_buf_reader),
+    )
+    .await
+    {
+        Ok(c) => match c {
+            None => return Close,
             Some(header) => header,
-        };
+        },
+        Err(_) => return Close,
+    };
 
     if client_request_header.method == HttpRequestMethod::Get {
         if client_request_header.has_relative_path() {
@@ -247,6 +269,7 @@ where
                         .unwrap_or_default();
                 }
             };
+            Keep
         } else {
             let host = match url_is_http(&client_request_header) {
                 None => {
@@ -255,26 +278,40 @@ where
                         .write_all(response.as_bytes())
                         .await
                         .unwrap_or_default();
-                    return;
+                    return keep_alive_if(&client_request_header);
                 }
                 Some(h) => h.to_string(),
             };
 
             let cache_file_path = match get_cache_name(&client_request_header).await {
-                None => return,
+                None => return keep_alive_if(&client_request_header),
                 Some(p) => p,
             };
 
             if cache_file_path.exists() {
-                serve_existing_file(&cache_file_path, stream, client_request_header).await;
+                serve_existing_file(&cache_file_path, stream, client_request_header).await
             } else {
                 #[cfg(feature = "https")]
-                fetch_and_serve_file(cache_file_path, stream, host, client_request_header, cert)
-                    .await;
+                return fetch_and_serve_file(
+                    cache_file_path,
+                    stream,
+                    host,
+                    client_request_header,
+                    cert,
+                )
+                .await;
                 #[cfg(not(feature = "https"))]
-                fetch_and_serve_file(cache_file_path, stream, host, client_request_header).await;
+                return fetch_and_serve_file(cache_file_path, stream, host, client_request_header)
+                    .await;
             }
         }
+    } else {
+        let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .unwrap_or_default();
+        Keep
     }
 }
 
@@ -282,7 +319,8 @@ async fn serve_existing_file<T>(
     cache_file_path: &PathBuf,
     mut stream: T,
     client_request_header: HttpRequestHeader,
-) where
+) -> ConnectionReturn
+where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     let mut file = match File::open(cache_file_path).await {
@@ -293,7 +331,7 @@ async fn serve_existing_file<T>(
                 .write_all(response.as_bytes())
                 .await
                 .unwrap_or_default();
-            return;
+            return keep_alive_if(&client_request_header);
         }
     };
 
@@ -305,7 +343,7 @@ async fn serve_existing_file<T>(
                 .write_all(response.as_bytes())
                 .await
                 .unwrap_or_default();
-            return;
+            return keep_alive_if(&client_request_header);
         }
     };
 
@@ -316,7 +354,7 @@ async fn serve_existing_file<T>(
             .write_all(response.as_bytes())
             .await
             .unwrap_or_default();
-        return;
+        return keep_alive_if(&client_request_header);
     }
 
     let mut start_position: u64 = 0;
@@ -364,7 +402,7 @@ async fn serve_existing_file<T>(
             .write_all(response.as_bytes())
             .await
             .unwrap_or_default();
-        return;
+        return keep_alive_if(&client_request_header);
     }
 
     let mut bytes: u64 = end_position - start_position + 1;
@@ -375,13 +413,14 @@ async fn serve_existing_file<T>(
             Ok(0) => break,
             Ok(n) => {
                 if stream.write_all(&buffer[..n]).await.is_err() {
-                    break;
+                    return Close;
                 }
                 bytes -= n as u64;
             }
             Err(_) => break,
         }
     }
+    keep_alive_if(&client_request_header)
 }
 
 async fn fetch_and_serve_file<T>(
@@ -390,7 +429,8 @@ async fn fetch_and_serve_file<T>(
     host: String,
     client_request_header: HttpRequestHeader,
     #[cfg(feature = "https")] certificates: &CertificateSetup,
-) where
+) -> ConnectionReturn
+where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     async fn fetch<R, S>(
@@ -399,14 +439,15 @@ async fn fetch_and_serve_file<T>(
         host: String,
         fetch_buf_reader: &mut BufReader<&mut R>,
         mut stream: &mut S,
-    ) where
+    ) -> ConnectionReturn
+    where
         R: AsyncReadExt + AsyncWriteExt + Unpin,
         S: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         let fetch_request = HttpRequestHeader {
             method: HttpRequestMethod::Get,
             path: client_request_header.get_path_without_query().to_string(),
-            version: client_request_header.version,
+            version: HttpVersion::from(&client_request_header.version.as_str()),
             headers: {
                 let mut headers = client_request_header.headers.clone();
                 headers.remove("Range"); /* Not cached so need to download from start */
@@ -427,6 +468,7 @@ async fn fetch_and_serve_file<T>(
                     .write_all(response.as_bytes())
                     .await
                     .unwrap_or_default();
+                return keep_alive_if(&client_request_header);
             }
         }
 
@@ -439,7 +481,7 @@ async fn fetch_and_serve_file<T>(
                         .write_all(response.as_bytes())
                         .await
                         .unwrap_or_default();
-                    return;
+                    return keep_alive_if(&client_request_header);
                 }
                 Some(s) => s,
             };
@@ -451,7 +493,7 @@ async fn fetch_and_serve_file<T>(
             .await
         {
             Ok(_) => {}
-            Err(_) => return,
+            Err(_) => return Close,
         }
 
         if fetch_response_header.status.to_code() == 200 {
@@ -462,7 +504,7 @@ async fn fetch_and_serve_file<T>(
                         .write_all(response.as_bytes())
                         .await
                         .unwrap_or_default();
-                    return;
+                    return keep_alive_if(&client_request_header);
                 }
                 Some(p) => p,
             };
@@ -483,7 +525,7 @@ async fn fetch_and_serve_file<T>(
                         .write_all(response.as_bytes())
                         .await
                         .unwrap_or_default();
-                    return;
+                    return keep_alive_if(&client_request_header);
                 }
                 Ok(file) => file,
             };
@@ -505,7 +547,7 @@ async fn fetch_and_serve_file<T>(
                         .write_all(response.as_bytes())
                         .await
                         .unwrap_or_default();
-                    return;
+                    return keep_alive_if(&client_request_header);
                 }
             } else {
                 let content_length = match fetch_response_header.headers.get("Content-Length") {
@@ -515,7 +557,7 @@ async fn fetch_and_serve_file<T>(
                             .write_all(response.as_bytes())
                             .await
                             .unwrap_or_default();
-                        return;
+                        return keep_alive_if(&client_request_header);
                     }
                     Some(s) => match s.parse::<u64>() {
                         Ok(u) => u,
@@ -525,7 +567,7 @@ async fn fetch_and_serve_file<T>(
                                 .write_all(response.as_bytes())
                                 .await
                                 .unwrap_or_default();
-                            return;
+                            return keep_alive_if(&client_request_header);
                         }
                     },
                 };
@@ -561,10 +603,13 @@ async fn fetch_and_serve_file<T>(
             } else if cache_file_path.is_file() {
                 /* Something has gone wrong, undefined state */
                 let _ = remove_file(cache_file_path).await;
+                return Close;
             }
+            keep_alive_if(&client_request_header)
         } else {
             let pass_through = fetch_response_header.generate();
             let _ = stream.write_all(pass_through.as_bytes()).await;
+            keep_alive_if(&client_request_header)
         }
     }
 
@@ -577,7 +622,7 @@ async fn fetch_and_serve_file<T>(
                 .write_all(response.as_bytes())
                 .await
                 .unwrap_or_default();
-            return;
+            return keep_alive_if(&client_request_header);
         }
     };
 
@@ -592,7 +637,7 @@ async fn fetch_and_serve_file<T>(
             Ok(d) => d,
             Err(e) => {
                 eprintln!("{PKG_NAME} couldn't domain name: {e}");
-                return;
+                return Close;
             }
         };
 
@@ -604,7 +649,7 @@ async fn fetch_and_serve_file<T>(
             Ok(s) => s,
             Err(e) => {
                 eprintln!("{PKG_NAME} couldn't establish HTTPS connection to {host}: {e}");
-                return;
+                return Close;
             }
         };
 
@@ -617,7 +662,7 @@ async fn fetch_and_serve_file<T>(
             &mut stream,
         )
         .await;
-        return;
+        return Upgrade;
     }
 
     let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
@@ -628,5 +673,5 @@ async fn fetch_and_serve_file<T>(
         &mut fetch_buf_reader,
         &mut stream,
     )
-    .await;
+    .await
 }

@@ -1,3 +1,4 @@
+use crate::http::ConnectionReturn::{Close, Keep};
 use std::{
     collections::HashMap,
     fmt::Formatter,
@@ -21,7 +22,14 @@ pub const X_PROXY_CACHE_PATH: &str = "X_PROXY_CACHE_PATH";
 pub const BUFFER_SIZE: usize = 16384;
 const WAIT_TIMEOUT_SECONDS: u64 = 10;
 
-pub enum HttpRequestMethod {
+pub(crate) enum ConnectionReturn {
+    Close,
+    Keep,
+    #[allow(dead_code)]
+    Upgrade,
+}
+
+pub(crate) enum HttpRequestMethod {
     Get,
     Post,
     Put,
@@ -47,7 +55,7 @@ impl PartialEq for HttpRequestMethod {
             (HttpRequestMethod::Connect, HttpRequestMethod::Connect) => true,
             (HttpRequestMethod::Patch, HttpRequestMethod::Patch) => true,
             (HttpRequestMethod::Custom(x), HttpRequestMethod::Custom(y)) => x == y,
-            _ => false
+            _ => false,
         }
     }
 }
@@ -107,6 +115,32 @@ impl HttpVersion {
             "HTTP/1.1" => Self::HTTP_V11,
             _ => Self::HTTP_V09,
         }
+    }
+}
+
+pub(crate) fn keep_alive_if(header: &HttpRequestHeader) -> ConnectionReturn {
+    match header.version {
+        HttpVersion(11) => match header.headers.get("Connection") {
+            None => Keep,
+            Some(v) => {
+                if v == "Close" {
+                    Close
+                } else {
+                    Keep
+                }
+            }
+        },
+        HttpVersion(10) => match header.headers.get("Connection") {
+            None => Close,
+            Some(v) => {
+                if v == "Close" {
+                    Close
+                } else {
+                    Keep
+                }
+            }
+        },
+        _ => Close,
     }
 }
 
