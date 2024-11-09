@@ -13,14 +13,14 @@ use crate::http::{
 use rustls::pki_types::ServerName;
 #[cfg(feature = "https")]
 use std::convert::TryFrom;
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-use tokio::io::BufReader;
 #[cfg(feature = "https")]
 use tokio::select;
 
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+
 use tokio::{
     fs::{create_dir_all, remove_file, File},
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
     net::{TcpListener, TcpStream},
     sync::Semaphore,
     time::timeout,
