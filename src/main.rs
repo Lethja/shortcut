@@ -85,8 +85,8 @@ async fn main() {
     drop(http_bind);
 
     let max_connections = std::env::var(X_PROXY_MAX_CONNECTIONS)
-        .unwrap_or_else(|_| "16".to_string())
-        .parse()
+        .ok()
+        .and_then(|s| s.parse().ok())
         .unwrap_or(16);
 
     let semaphore = Arc::new(Semaphore::new(max_connections));
@@ -133,12 +133,10 @@ async fn listen_for(
                 Close => break,
                 Keep => continue,
                 #[cfg(feature = "https")]
-                Upgrade => {
-                    match listen_for_https(&mut stream, &certificates).await {
-                        Keep => continue,
-                        _ => return,
-                    }
-                }
+                Upgrade => match listen_for_https(&mut stream, &certificates).await {
+                    Keep => continue,
+                    _ => return,
+                },
             }
         }
     });
@@ -149,7 +147,6 @@ async fn listen_for_https(
     stream: &mut TcpStream,
     certificates: &Arc<CertificateSetup>,
 ) -> ConnectionReturn {
-
     let acceptor = certificates.server_config.clone();
 
     let mut stream = match acceptor.accept(stream).await {
@@ -160,17 +157,7 @@ async fn listen_for_https(
         }
     };
 
-    loop {
-        match handle_connection(
-            &mut stream,
-            &certificates,
-        )
-            .await
-        {
-            Keep => continue,
-            _ => break,
-        }
-    }
+    while let Keep = handle_connection(&mut stream, certificates).await { }
 
     Close
 }
@@ -207,35 +194,32 @@ where
                             serve_existing_file(
                                 &cert.server_cert_path,
                                 stream,
-                                client_request_header,
+                                &client_request_header,
                             )
                             .await;
                         } else {
                             let response = HttpResponseStatus::NOT_FOUND.to_response();
-                            stream
-                                .write_all(response.as_bytes())
-                                .await
-                                .unwrap_or_default();
+                            if stream.write_all(response.as_bytes()).await.is_err() {
+                                return Close;
+                            }
                         }
                     }
                 }
                 _ => {
                     let response = HttpResponseStatus::NO_CONTENT.to_header();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        return Close;
+                    }
                 }
             };
-            Keep
+            keep_alive_if(&client_request_header)
         } else {
             let host = match url_is_http(&client_request_header) {
                 None => {
                     let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        return Close;
+                    }
                     return keep_alive_if(&client_request_header);
                 }
                 Some(h) => h.to_string(),
@@ -247,7 +231,7 @@ where
             };
 
             if cache_file_path.exists() {
-                serve_existing_file(&cache_file_path, stream, client_request_header).await
+                serve_existing_file(&cache_file_path, stream, &client_request_header).await
             } else {
                 #[cfg(feature = "https")]
                 return fetch_and_serve_file(
@@ -265,18 +249,17 @@ where
         }
     } else {
         let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
-        stream
-            .write_all(response.as_bytes())
-            .await
-            .unwrap_or_default();
-        Keep
+        if stream.write_all(response.as_bytes()).await.is_err() {
+            return Close;
+        }
+        keep_alive_if(&client_request_header)
     }
 }
 
 async fn serve_existing_file<T>(
     cache_file_path: &PathBuf,
     mut stream: T,
-    client_request_header: HttpRequestHeader,
+    client_request_header: &HttpRequestHeader,
 ) -> ConnectionReturn
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -285,11 +268,10 @@ where
         Ok(f) => f,
         Err(_) => {
             let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-            stream
-                .write_all(response.as_bytes())
-                .await
-                .unwrap_or_default();
-            return keep_alive_if(&client_request_header);
+            if stream.write_all(response.as_bytes()).await.is_err() {
+                return Close;
+            }
+            return keep_alive_if(client_request_header);
         }
     };
 
@@ -297,22 +279,20 @@ where
         Ok(m) => m,
         Err(_) => {
             let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-            stream
-                .write_all(response.as_bytes())
-                .await
-                .unwrap_or_default();
-            return keep_alive_if(&client_request_header);
+            if stream.write_all(response.as_bytes()).await.is_err() {
+                return Close;
+            }
+            return keep_alive_if(client_request_header);
         }
     };
 
     let length = metadata.len();
     if length == 0 {
         let response = HttpResponseStatus::NO_CONTENT.to_header();
-        stream
-            .write_all(response.as_bytes())
-            .await
-            .unwrap_or_default();
-        return keep_alive_if(&client_request_header);
+        if stream.write_all(response.as_bytes()).await.is_err() {
+            return Close;
+        }
+        return keep_alive_if(client_request_header);
     }
 
     let mut start_position: u64 = 0;
@@ -356,11 +336,10 @@ where
 
     if end_position <= start_position {
         let response = HttpResponseStatus::BAD_REQUEST.to_response();
-        stream
-            .write_all(response.as_bytes())
-            .await
-            .unwrap_or_default();
-        return keep_alive_if(&client_request_header);
+        if stream.write_all(response.as_bytes()).await.is_err() {
+            return Close;
+        }
+        return keep_alive_if(client_request_header);
     }
 
     let mut bytes: u64 = end_position - start_position + 1;
@@ -378,7 +357,7 @@ where
             Err(_) => break,
         }
     }
-    keep_alive_if(&client_request_header)
+    keep_alive_if(client_request_header)
 }
 
 async fn fetch_and_serve_file<T>(
@@ -405,7 +384,7 @@ where
         let fetch_request = HttpRequestHeader {
             method: HttpRequestMethod::Get,
             path: client_request_header.get_path_without_query().to_string(),
-            version: HttpVersion::from(&client_request_header.version.as_str()),
+            version: HttpVersion::from(client_request_header.version.as_str()),
             headers: {
                 let mut headers = client_request_header.headers.clone();
                 headers.remove("Range"); /* Not cached so need to download from start */
@@ -422,10 +401,9 @@ where
             Ok(_) => {}
             Err(_) => {
                 let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                stream
-                    .write_all(response.as_bytes())
-                    .await
-                    .unwrap_or_default();
+                if stream.write_all(response.as_bytes()).await.is_err() {
+                    return Close;
+                }
                 return keep_alive_if(&client_request_header);
             }
         }
@@ -435,10 +413,9 @@ where
                 None => {
                     eprintln!("Error: unable to extract header from '{host}'");
                     let response = HttpResponseStatus::BAD_GATEWAY.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        return Close;
+                    }
                     return keep_alive_if(&client_request_header);
                 }
                 Some(s) => s,
@@ -458,10 +435,9 @@ where
             let cache_file_parent = match cache_file_path.parent() {
                 None => {
                     let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        return Close;
+                    }
                     return keep_alive_if(&client_request_header);
                 }
                 Some(p) => p,
@@ -470,19 +446,17 @@ where
                 Ok(_) => {}
                 Err(_) => {
                     let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        return Close;
+                    }
                 }
             }
             let mut file = match File::create(&cache_file_path).await {
                 Err(_) => {
                     let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        return Close;
+                    }
                     return keep_alive_if(&client_request_header);
                 }
                 Ok(file) => file,
@@ -501,30 +475,27 @@ where
                     .await
                 } else {
                     let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                    stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .unwrap_or_default();
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        return Close;
+                    }
                     return keep_alive_if(&client_request_header);
                 }
             } else {
                 let content_length = match fetch_response_header.headers.get("Content-Length") {
                     None => {
                         let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                        stream
-                            .write_all(response.as_bytes())
-                            .await
-                            .unwrap_or_default();
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return Close;
+                        }
                         return keep_alive_if(&client_request_header);
                     }
                     Some(s) => match s.parse::<u64>() {
                         Ok(u) => u,
                         Err(_) => {
                             let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                            stream
-                                .write_all(response.as_bytes())
-                                .await
-                                .unwrap_or_default();
+                            if stream.write_all(response.as_bytes()).await.is_err() {
+                                return Close;
+                            }
                             return keep_alive_if(&client_request_header);
                         }
                     },
@@ -576,10 +547,9 @@ where
         Err(e) => {
             eprintln!("Error: unable to connect to '{host}': {e}");
             let response = HttpResponseStatus::BAD_GATEWAY.to_response();
-            stream
-                .write_all(response.as_bytes())
-                .await
-                .unwrap_or_default();
+            if stream.write_all(response.as_bytes()).await.is_err() {
+                return Close;
+            }
             return keep_alive_if(&client_request_header);
         }
     };
