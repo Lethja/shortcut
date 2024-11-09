@@ -4,8 +4,6 @@ mod http;
 
 #[cfg(feature = "https")]
 use crate::cert::{setup_certificates, CertificateSetup, CERT_QUERY};
-#[cfg(feature = "https")]
-use crate::ConnectionReturn::Upgrade;
 use crate::http::{
     fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if,
     url_is_http, ConnectionReturn,
@@ -14,12 +12,11 @@ use crate::http::{
     BUFFER_SIZE, X_PROXY_CACHE_PATH,
 };
 #[cfg(feature = "https")]
+use crate::ConnectionReturn::Upgrade;
+#[cfg(feature = "https")]
 use rustls::pki_types::ServerName;
 #[cfg(feature = "https")]
 use std::convert::TryFrom;
-#[cfg(feature = "https")]
-use tokio::select;
-
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use tokio::{
@@ -34,8 +31,6 @@ pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const X_PROXY_HTTP_LISTEN_ADDRESS: &str = "X_PROXY_HTTP_LISTEN_ADDRESS";
-#[cfg(feature = "https")]
-const X_PROXY_HTTPS_LISTEN_ADDRESS: &str = "X_PROXY_HTTPS_LISTEN_ADDRESS";
 const X_PROXY_MAX_CONNECTIONS: &str = "X_PROXY_MAX_CONNECTIONS";
 
 #[tokio::main]
@@ -62,8 +57,6 @@ async fn main() {
     let certificates = Arc::new(setup_certificates());
 
     let http_bind = std::env::var(X_PROXY_HTTP_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
-    #[cfg(feature = "https")]
-    let https_bind = std::env::var(X_PROXY_HTTPS_LISTEN_ADDRESS).unwrap_or("[::]:3143".to_string());
 
     let http_listener = match TcpListener::bind(&http_bind).await {
         Ok(l) => {
@@ -83,26 +76,6 @@ async fn main() {
     };
     drop(http_bind);
 
-    #[cfg(feature = "https")]
-    let https_listener = match TcpListener::bind(&https_bind).await {
-        Ok(l) => {
-            let details = l.local_addr().unwrap();
-            let address = match details.ip().is_unspecified() {
-                true => "Any".to_string(),
-                false => details.ip().to_string(),
-            };
-            eprintln!("{PKG_NAME} HTTPS listen address: {}", address);
-            eprintln!("{PKG_NAME} HTTPS listen port: {}", details.port());
-            l
-        }
-        Err(e) => {
-            eprintln!("Error: unable to bind '{https_bind}': {e}");
-            return;
-        }
-    };
-    #[cfg(feature = "https")]
-    drop(https_bind);
-
     let max_connections = std::env::var(X_PROXY_MAX_CONNECTIONS)
         .unwrap_or_else(|_| "16".to_string())
         .parse()
@@ -113,8 +86,6 @@ async fn main() {
     loop {
         listen_for(
             &http_listener,
-            #[cfg(feature = "https")]
-            &https_listener,
             &semaphore,
             #[cfg(feature = "https")]
             &certificates,
@@ -123,8 +94,11 @@ async fn main() {
     }
 }
 
-#[cfg(not(feature = "https"))]
-async fn listen_for(http_listener: &TcpListener, semaphore: &Arc<Semaphore>) {
+async fn listen_for(
+    http_listener: &TcpListener,
+    semaphore: &Arc<Semaphore>,
+    #[cfg(feature = "https")] certificates: &Arc<CertificateSetup>,
+) {
     let (mut stream, _) = match http_listener.accept().await {
         Ok(s) => s,
         Err(e) => {
@@ -134,6 +108,8 @@ async fn listen_for(http_listener: &TcpListener, semaphore: &Arc<Semaphore>) {
     };
 
     let semaphore = Arc::clone(semaphore);
+    #[cfg(feature = "https")]
+    let certificates = Arc::clone(certificates);
 
     tokio::spawn(async move {
         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
@@ -142,79 +118,53 @@ async fn listen_for(http_listener: &TcpListener, semaphore: &Arc<Semaphore>) {
             match handle_connection(
                 &mut stream,
                 #[cfg(feature = "https")]
-                &cert,
+                &certificates,
             )
             .await
             {
                 Close => break,
                 Keep => continue,
-                ConnectionReturn::Upgrade => {}
+                #[cfg(feature = "https")]
+                Upgrade => {
+                    match listen_for_https(&mut stream, &certificates).await {
+                        Keep => continue,
+                        _ => return,
+                    }
+                }
             }
         }
     });
 }
 
 #[cfg(feature = "https")]
-async fn listen_for(
-    http_listener: &TcpListener,
-    https_listener: &TcpListener,
-    semaphore: &Arc<Semaphore>,
+async fn listen_for_https(
+    stream: &mut TcpStream,
     certificates: &Arc<CertificateSetup>,
-) {
-    select! {
-        accept_http = http_listener.accept() => {
-            match accept_http {
-                Ok((stream, _)) => {
-                    let semaphore = Arc::clone(semaphore);
-                    let cert = Arc::clone(certificates);
+) -> ConnectionReturn {
 
-                    tokio::spawn(async move {
-                        let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
+    let acceptor = certificates.server_config.clone();
 
-                        handle_connection(
-                            stream,
-                            &cert,
-                        )
-                        .await;
-                    });
-                }
-                Err(e) => {
-                    eprintln!("Error: Unable to accept new connection: {e}")
-                }
-            }
-        },
-        accept_https = https_listener.accept() => {
-            match accept_https {
-                Ok((stream, _)) => {
-                    let semaphore = Arc::clone(semaphore);
-                    let cert = Arc::clone(certificates);
+    let mut stream = match acceptor.accept(stream).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{PKG_NAME} couldn't create tls stream: {e}");
+            return Close;
+        }
+    };
 
-                    let acceptor = certificates.server_config.clone();
-
-                    tokio::spawn(async move {
-                        let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
-
-                        let stream = match acceptor.accept(stream).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                eprintln!("{PKG_NAME} couldn't create tls stream: {e}");
-                                return;
-                            }
-                        };
-
-                        handle_connection(
-                            stream,
-                            &cert,
-                        )
-                        .await;
-                    });
-                }
-                Err(e) => {
-                    eprintln!("Error: Unable to accept new connection: {e}")
-                }
-            }
+    loop {
+        match handle_connection(
+            &mut stream,
+            &certificates,
+        )
+            .await
+        {
+            Keep => continue,
+            _ => break,
         }
     }
+
+    Close
 }
 
 async fn handle_connection<T>(

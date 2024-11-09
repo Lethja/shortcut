@@ -25,7 +25,7 @@ const WAIT_TIMEOUT_SECONDS: u64 = 10;
 pub(crate) enum ConnectionReturn {
     Close,
     Keep,
-    #[allow(dead_code)]
+    #[cfg(feature = "https")]
     Upgrade,
 }
 
