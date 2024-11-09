@@ -65,8 +65,16 @@ async fn main() {
                 true => "Any".to_string(),
                 false => details.ip().to_string(),
             };
-            eprintln!("{PKG_NAME} HTTP listen address: {}", address);
-            eprintln!("{PKG_NAME} HTTP listen port: {}", details.port());
+            #[cfg(feature = "https")]
+            {
+                eprintln!("{PKG_NAME} HTTP(S) listen address: {}", address);
+                eprintln!("{PKG_NAME} HTTP(S) listen port: {}", details.port());
+            }
+            #[cfg(not(feature = "https"))]
+            {
+                eprintln!("{PKG_NAME} HTTP listen address: {}", address);
+                eprintln!("{PKG_NAME} HTTP listen port: {}", details.port());
+            }
             l
         }
         Err(e) => {
