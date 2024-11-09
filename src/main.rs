@@ -217,7 +217,7 @@ where
             Some(header) => header,
         };
 
-    if let HttpRequestMethod::Get = client_request_header.method {
+    if client_request_header.method == HttpRequestMethod::Get {
         if client_request_header.has_relative_path() {
             match client_request_header.get_query() {
                 #[cfg(feature = "https")]

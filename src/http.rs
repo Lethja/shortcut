@@ -34,6 +34,24 @@ pub enum HttpRequestMethod {
     Custom(String),
 }
 
+impl PartialEq for HttpRequestMethod {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (HttpRequestMethod::Get, HttpRequestMethod::Get) => true,
+            (HttpRequestMethod::Post, HttpRequestMethod::Post) => true,
+            (HttpRequestMethod::Put, HttpRequestMethod::Put) => true,
+            (HttpRequestMethod::Delete, HttpRequestMethod::Delete) => true,
+            (HttpRequestMethod::Head, HttpRequestMethod::Head) => true,
+            (HttpRequestMethod::Options, HttpRequestMethod::Options) => true,
+            (HttpRequestMethod::Trace, HttpRequestMethod::Trace) => true,
+            (HttpRequestMethod::Connect, HttpRequestMethod::Connect) => true,
+            (HttpRequestMethod::Patch, HttpRequestMethod::Patch) => true,
+            (HttpRequestMethod::Custom(x), HttpRequestMethod::Custom(y)) => x == y,
+            _ => false
+        }
+    }
+}
+
 impl From<&str> for HttpRequestMethod {
     fn from(input: &str) -> HttpRequestMethod {
         match input.to_uppercase().as_str() {
