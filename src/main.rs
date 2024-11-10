@@ -575,12 +575,10 @@ where
         .get_scheme()
         .is_some_and(|s| s == "https")
     {
-        let host_str = host.clone();
-
-        let domain = match ServerName::try_from(host_str) {
+        let domain = match ServerName::try_from(host.clone()) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("{PKG_NAME} couldn't domain name: {e}");
+                eprintln!("{PKG_NAME} couldn't get domain name from '{host}': {e}");
                 return Close;
             }
         };

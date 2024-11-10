@@ -161,7 +161,7 @@ fn get_mandatory_http_request_header_line(
 
     let method = HttpRequestMethod::from(elements[0]);
     let path = elements[1];
-    if !path.starts_with('/') && !path.contains("://") {
+    if method == HttpRequestMethod::Get && !path.starts_with('/') && !path.contains("://") {
         return None;
     }
 
