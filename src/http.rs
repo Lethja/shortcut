@@ -26,7 +26,7 @@ pub(crate) enum ConnectionReturn {
     Close,
     Keep,
     #[cfg(feature = "https")]
-    Upgrade,
+    Upgrade(String),
 }
 
 pub(crate) enum HttpRequestMethod {
