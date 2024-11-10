@@ -157,7 +157,7 @@ async fn listen_for_https(
         }
     };
 
-    while let Keep = handle_connection(&mut stream, certificates).await { }
+    while let Keep = handle_connection(&mut stream, certificates).await {}
 
     Close
 }
@@ -184,75 +184,91 @@ where
         Err(_) => return Close,
     };
 
-    if client_request_header.method == HttpRequestMethod::Get {
-        if client_request_header.has_relative_path() {
-            match client_request_header.get_query() {
-                #[cfg(feature = "https")]
-                Some(q) => {
-                    if q == CERT_QUERY {
-                        if cert.server_cert_path.is_file() {
-                            serve_existing_file(
-                                &cert.server_cert_path,
-                                stream,
-                                &client_request_header,
-                            )
-                            .await;
-                        } else {
-                            let response = HttpResponseStatus::NOT_FOUND.to_response();
-                            if stream.write_all(response.as_bytes()).await.is_err() {
-                                return Close;
+    match client_request_header.method {
+        HttpRequestMethod::Get => {
+            if client_request_header.has_relative_path() {
+                match client_request_header.get_query() {
+                    #[cfg(feature = "https")]
+                    Some(q) => {
+                        if q == CERT_QUERY {
+                            if cert.server_cert_path.is_file() {
+                                serve_existing_file(
+                                    &cert.server_cert_path,
+                                    stream,
+                                    &client_request_header,
+                                )
+                                .await;
+                            } else {
+                                let response = HttpResponseStatus::NOT_FOUND.to_response();
+                                if stream.write_all(response.as_bytes()).await.is_err() {
+                                    return Close;
+                                }
                             }
                         }
                     }
-                }
-                _ => {
-                    let response = HttpResponseStatus::NO_CONTENT.to_header();
-                    if stream.write_all(response.as_bytes()).await.is_err() {
-                        return Close;
+                    _ => {
+                        let response = HttpResponseStatus::NO_CONTENT.to_header();
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return Close;
+                        }
                     }
-                }
-            };
-            keep_alive_if(&client_request_header)
-        } else {
-            let host = match url_is_http(&client_request_header) {
-                None => {
-                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    if stream.write_all(response.as_bytes()).await.is_err() {
-                        return Close;
-                    }
-                    return keep_alive_if(&client_request_header);
-                }
-                Some(h) => h.to_string(),
-            };
-
-            let cache_file_path = match get_cache_name(&client_request_header).await {
-                None => return keep_alive_if(&client_request_header),
-                Some(p) => p,
-            };
-
-            if cache_file_path.exists() {
-                serve_existing_file(&cache_file_path, stream, &client_request_header).await
+                };
+                keep_alive_if(&client_request_header)
             } else {
-                #[cfg(feature = "https")]
-                return fetch_and_serve_file(
-                    cache_file_path,
-                    stream,
-                    host,
-                    client_request_header,
-                    cert,
-                )
-                .await;
-                #[cfg(not(feature = "https"))]
-                return fetch_and_serve_file(cache_file_path, stream, host, client_request_header)
+                let host = match url_is_http(&client_request_header) {
+                    None => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return Close;
+                        }
+                        return keep_alive_if(&client_request_header);
+                    }
+                    Some(h) => h.to_string(),
+                };
+
+                let cache_file_path = match get_cache_name(&client_request_header).await {
+                    None => return keep_alive_if(&client_request_header),
+                    Some(p) => p,
+                };
+
+                if cache_file_path.exists() {
+                    serve_existing_file(&cache_file_path, stream, &client_request_header).await
+                } else {
+                    #[cfg(feature = "https")]
+                    return fetch_and_serve_file(
+                        cache_file_path,
+                        stream,
+                        host,
+                        client_request_header,
+                        cert,
+                    )
                     .await;
+                    #[cfg(not(feature = "https"))]
+                    return fetch_and_serve_file(
+                        cache_file_path,
+                        stream,
+                        host,
+                        client_request_header,
+                    )
+                    .await;
+                }
             }
         }
-    } else {
-        let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
-        if stream.write_all(response.as_bytes()).await.is_err() {
-            return Close;
+        #[cfg(feature = "https")]
+        HttpRequestMethod::Connect => {
+            let response = HttpResponseStatus::OK.to_header();
+            if stream.write_all(response.as_bytes()).await.is_err() {
+                return Close;
+            }
+            Upgrade
         }
-        keep_alive_if(&client_request_header)
+        _ => {
+            let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
+            if stream.write_all(response.as_bytes()).await.is_err() {
+                return Close;
+            }
+            keep_alive_if(&client_request_header)
+        }
     }
 }
 
