@@ -510,11 +510,18 @@ impl HttpResponseStatus {
         self.0
     }
 
-    pub(crate) fn to_header(&self) -> String {
+    fn to_header(&self) -> String {
         let code = self.0;
         let str = self.to_description().to_uppercase();
         let date = httpdate::fmt_http_date(SystemTime::now());
         format!("HTTP/1.1 {code} {str}{END_OF_HTTP_HEADER_LINE}Date: {date}")
+    }
+
+    pub(crate) fn to_empty_response(&self) -> String {
+        let code = self.0;
+        let str = self.to_description().to_uppercase();
+        let date = httpdate::fmt_http_date(SystemTime::now());
+        format!("HTTP/1.1 {code} {str}{END_OF_HTTP_HEADER_LINE}Date: {date}{END_OF_HTTP_HEADER}")
     }
 
     pub(crate) fn to_response(&self) -> String {

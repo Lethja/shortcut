@@ -207,7 +207,7 @@ where
                         }
                     }
                     _ => {
-                        let response = HttpResponseStatus::NO_CONTENT.to_header();
+                        let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
                         if stream.write_all(response.as_bytes()).await.is_err() {
                             return Close;
                         }
@@ -256,7 +256,7 @@ where
         }
         #[cfg(feature = "https")]
         HttpRequestMethod::Connect => {
-            let response = HttpResponseStatus::OK.to_header();
+            let response = HttpResponseStatus::OK.to_empty_response();
             if stream.write_all(response.as_bytes()).await.is_err() {
                 return Close;
             }
@@ -304,7 +304,7 @@ where
 
     let length = metadata.len();
     if length == 0 {
-        let response = HttpResponseStatus::NO_CONTENT.to_header();
+        let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
         if stream.write_all(response.as_bytes()).await.is_err() {
             return Close;
         }
