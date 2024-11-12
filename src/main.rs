@@ -19,6 +19,8 @@ use rustls::pki_types::ServerName;
 use std::convert::TryFrom;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
+#[cfg(feature = "https")]
+use crate::http::ConnectionReturn::Redirect;
 use tokio::{
     fs::{create_dir_all, remove_file, File},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
@@ -132,13 +134,13 @@ async fn listen_for(
             )
             .await
             {
-                Close => break,
                 Keep => continue,
                 #[cfg(feature = "https")]
                 Upgrade(s) => match listen_for_https(&mut stream, &certificates, s).await {
                     Keep => continue,
                     _ => return,
                 },
+                _ => break,
             }
         }
     });
@@ -211,35 +213,40 @@ where
                         }
                     }
                     #[cfg(feature = "https")]
-                    _ => {
-                        match host {
-                            None => {
-                                let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
-                                if stream.write_all(response.as_bytes()).await.is_err() {
-                                    return Close;
-                                }
-                            }
-                            Some(host) => {
-                                let cache_file_path = match get_cache_name(&client_request_header).await {
-                                    None => return keep_alive_if(&client_request_header),
-                                    Some(p) => p,
-                                };
-
-                                if cache_file_path.exists() {
-                                    serve_existing_file(&cache_file_path, stream, &client_request_header).await
-                                } else {
-                                    return fetch_and_serve_file(
-                                        cache_file_path,
-                                        stream,
-                                        String::from(host),
-                                        client_request_header,
-                                        cert,
-                                        true,
-                                    ).await;
-                                };
+                    _ => match host {
+                        None => {
+                            let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
+                            if stream.write_all(response.as_bytes()).await.is_err() {
+                                return Close;
                             }
                         }
-                    }
+                        Some(host) => {
+                            let cache_file_path = match get_cache_name(&client_request_header).await
+                            {
+                                None => return keep_alive_if(&client_request_header),
+                                Some(p) => p,
+                            };
+
+                            if cache_file_path.exists() {
+                                serve_existing_file(
+                                    &cache_file_path,
+                                    stream,
+                                    &client_request_header,
+                                )
+                                .await
+                            } else {
+                                return fetch_and_serve_file(
+                                    cache_file_path,
+                                    stream,
+                                    String::from(host),
+                                    client_request_header,
+                                    cert,
+                                    true,
+                                )
+                                .await;
+                            };
+                        }
+                    },
                     #[cfg(not(feature = "https"))]
                     _ => {
                         let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
@@ -415,7 +422,7 @@ where
 async fn fetch_and_serve_file<T>(
     cache_file_path: PathBuf,
     mut stream: T,
-    host: String,
+    mut host: String,
     client_request_header: HttpRequestHeader,
     #[cfg(feature = "https")] certificates: &CertificateSetup,
     #[cfg(feature = "https")] https: bool,
@@ -424,11 +431,12 @@ where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
 {
     async fn fetch<R, S>(
-        cache_file_path: PathBuf,
+        cache_file_path: &PathBuf,
         client_request_header: &HttpRequestHeader,
         host: &String,
         fetch_buf_reader: &mut BufReader<&mut R>,
         mut stream: &mut S,
+        #[cfg(feature = "https")] https: bool,
     ) -> ConnectionReturn
     where
         R: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -436,7 +444,7 @@ where
     {
         let fetch_request = HttpRequestHeader {
             method: HttpRequestMethod::Get,
-            path: client_request_header.get_path_without_query().to_string(),
+            path: client_request_header.get_path_with_query().to_string(),
             version: HttpVersion::from(client_request_header.version.as_str()),
             headers: {
                 let mut headers = client_request_header.headers.clone();
@@ -484,57 +492,9 @@ where
             Err(_) => return Close,
         }
 
-        if fetch_response_header.status.to_code() == 200 {
-            let cache_file_parent = match cache_file_path.parent() {
-                None => {
-                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    if stream.write_all(response.as_bytes()).await.is_err() {
-                        return Close;
-                    }
-                    return keep_alive_if(&client_request_header);
-                }
-                Some(p) => p,
-            };
-            match create_dir_all(cache_file_parent).await {
-                Ok(_) => {}
-                Err(_) => {
-                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    if stream.write_all(response.as_bytes()).await.is_err() {
-                        return Close;
-                    }
-                }
-            }
-            let mut file = match File::create(&cache_file_path).await {
-                Err(_) => {
-                    let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                    if stream.write_all(response.as_bytes()).await.is_err() {
-                        return Close;
-                    }
-                    return keep_alive_if(&client_request_header);
-                }
-                Ok(file) => file,
-            };
-
-            let (write_stream, write_file);
-
-            if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
-                if v.to_lowercase() == "chunked" {
-                    (write_stream, write_file) = fetch_and_serve_chunk(
-                        &cache_file_path,
-                        &mut stream,
-                        fetch_buf_reader,
-                        &mut file,
-                    )
-                    .await
-                } else {
-                    let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                    if stream.write_all(response.as_bytes()).await.is_err() {
-                        return Close;
-                    }
-                    return keep_alive_if(&client_request_header);
-                }
-            } else {
-                let content_length = match fetch_response_header.headers.get("Content-Length") {
+        match fetch_response_header.status.to_code() {
+            200 => {
+                let cache_file_parent = match cache_file_path.parent() {
                     None => {
                         let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
                         if stream.write_all(response.as_bytes()).await.is_err() {
@@ -542,56 +502,128 @@ where
                         }
                         return keep_alive_if(&client_request_header);
                     }
-                    Some(s) => match s.parse::<u64>() {
-                        Ok(u) => u,
-                        Err(_) => {
+                    Some(p) => p,
+                };
+                match create_dir_all(cache_file_parent).await {
+                    Ok(_) => {}
+                    Err(_) => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return Close;
+                        }
+                    }
+                }
+                let mut file = match File::create(&cache_file_path).await {
+                    Err(_) => {
+                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return Close;
+                        }
+                        return keep_alive_if(&client_request_header);
+                    }
+                    Ok(file) => file,
+                };
+
+                let (write_stream, write_file);
+
+                if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
+                    if v.to_lowercase() == "chunked" {
+                        (write_stream, write_file) = fetch_and_serve_chunk(
+                            &cache_file_path,
+                            &mut stream,
+                            fetch_buf_reader,
+                            &mut file,
+                        )
+                        .await
+                    } else {
+                        let response = HttpResponseStatus::BAD_REQUEST.to_response();
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return Close;
+                        }
+                        return keep_alive_if(&client_request_header);
+                    }
+                } else {
+                    let content_length = match fetch_response_header.headers.get("Content-Length") {
+                        None => {
+                            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                            if stream.write_all(response.as_bytes()).await.is_err() {
+                                return Close;
+                            }
+                            return keep_alive_if(&client_request_header);
+                        }
+                        Some(s) => match s.parse::<u64>() {
+                            Ok(u) => u,
+                            Err(_) => {
+                                let response = HttpResponseStatus::BAD_REQUEST.to_response();
+                                if stream.write_all(response.as_bytes()).await.is_err() {
+                                    return Close;
+                                }
+                                return keep_alive_if(&client_request_header);
+                            }
+                        },
+                    };
+
+                    (write_stream, write_file) = fetch_and_serve_known_length(
+                        &cache_file_path,
+                        &mut stream,
+                        content_length,
+                        &mut *fetch_buf_reader,
+                        &mut file,
+                    )
+                    .await;
+                }
+
+                let _ = timeout(Duration::from_millis(100), fetch_buf_reader.shutdown()).await;
+
+                if write_stream {
+                    let _ = timeout(Duration::from_millis(100), stream.shutdown()).await;
+                }
+
+                if write_file {
+                    if let Some(last_modified) = fetch_response_header.headers.get("Last-Modified")
+                    {
+                        if let Ok(last_modified) = httpdate::parse_http_date(last_modified) {
+                            let _ = timeout(
+                                Duration::from_millis(100),
+                                tokio::spawn(async move {
+                                    let _ = file.into_std().await.set_modified(last_modified);
+                                }),
+                            )
+                            .await;
+                        }
+                    }
+                } else if cache_file_path.is_file() {
+                    /* Something has gone wrong, undefined state */
+                    let _ = remove_file(cache_file_path).await;
+                    return Close;
+                }
+                keep_alive_if(&client_request_header)
+            }
+            #[cfg(feature = "https")]
+            302 => {
+                if https {
+                    let url = match fetch_response_header.headers.get("Location") {
+                        None => {
                             let response = HttpResponseStatus::BAD_REQUEST.to_response();
                             if stream.write_all(response.as_bytes()).await.is_err() {
                                 return Close;
                             }
                             return keep_alive_if(&client_request_header);
                         }
-                    },
-                };
-
-                (write_stream, write_file) = fetch_and_serve_known_length(
-                    &cache_file_path,
-                    &mut stream,
-                    content_length,
-                    &mut *fetch_buf_reader,
-                    &mut file,
-                )
-                .await;
-            }
-
-            let _ = timeout(Duration::from_millis(100), fetch_buf_reader.shutdown()).await;
-
-            if write_stream {
-                let _ = timeout(Duration::from_millis(100), stream.shutdown()).await;
-            }
-
-            if write_file {
-                if let Some(last_modified) = fetch_response_header.headers.get("Last-Modified") {
-                    if let Ok(last_modified) = httpdate::parse_http_date(last_modified) {
-                        let _ = timeout(
-                            Duration::from_millis(100),
-                            tokio::spawn(async move {
-                                let _ = file.into_std().await.set_modified(last_modified);
-                            }),
-                        )
-                        .await;
-                    }
+                        Some(s) => s,
+                    };
+                    Redirect(String::from(url))
+                } else {
+                    let pass_through = fetch_response_header.generate();
+                    let _ = stream.write_all(pass_through.as_bytes()).await;
+                    keep_alive_if(&client_request_header)
                 }
-            } else if cache_file_path.is_file() {
-                /* Something has gone wrong, undefined state */
-                let _ = remove_file(cache_file_path).await;
-                return Close;
             }
-            keep_alive_if(&client_request_header)
-        } else {
-            let pass_through = fetch_response_header.generate();
-            let _ = stream.write_all(pass_through.as_bytes()).await;
-            keep_alive_if(&client_request_header)
+            _ => {
+                let pass_through = fetch_response_header.generate();
+                let _ = stream.write_all(pass_through.as_bytes()).await;
+                keep_alive_if(&client_request_header)
+            }
         }
     }
 
@@ -608,18 +640,15 @@ where
     };
 
     #[cfg(feature = "https")]
-    if https
-    {
+    if https {
         let dns = match host.split_once(':') {
-            None => {return Close;}
-            Some((s,_)) => {
-                String::from(s)
+            None => {
+                return Close;
             }
+            Some((s, _)) => String::from(s),
         };
         let domain = match ServerName::try_from(dns) {
-            Ok(d) => {
-                d
-            },
+            Ok(d) => d,
             Err(e) => {
                 eprintln!("{PKG_NAME} couldn't get domain name from '{host}': {e}");
                 return Close;
@@ -639,23 +668,32 @@ where
         };
 
         let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
-        return fetch(
-            cache_file_path,
-            &client_request_header,
-            &host,
-            &mut fetch_buf_reader,
-            &mut stream,
-        )
-        .await;
+        loop {
+            match fetch(
+                &cache_file_path,
+                &client_request_header,
+                &host,
+                &mut fetch_buf_reader,
+                &mut stream,
+                true,
+            )
+            .await
+            {
+                Redirect(uri) => host = uri,
+                x => return x,
+            }
+        }
     }
 
     let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
     fetch(
-        cache_file_path,
+        &cache_file_path,
         &client_request_header,
         &host,
         &mut fetch_buf_reader,
         &mut stream,
+        #[cfg(feature = "https")]
+        false,
     )
     .await
 }

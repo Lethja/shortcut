@@ -26,6 +26,8 @@ pub(crate) enum ConnectionReturn {
     Close,
     Keep,
     #[cfg(feature = "https")]
+    Redirect(String),
+    #[cfg(feature = "https")]
     Upgrade(String),
 }
 
@@ -327,13 +329,8 @@ impl HttpRequestHeader {
         Some(port)
     }
 
-    pub(crate) fn get_path_without_query(&self) -> &str {
-        let query = match self.path.find('?') {
-            None => self.path.len(),
-            Some(u) => u,
-        };
-
-        let path = match self.path.find('/') {
+    fn get_path_start(&self) -> usize {
+        match self.path.find('/') {
             Some(0) => 0usize,
             Some(mut u) => {
                 if u + 1 < self.path.len() - 2 && self.path[u - 1..].contains("://") {
@@ -344,6 +341,19 @@ impl HttpRequestHeader {
                 u
             }
             None => 0,
+        }
+    }
+
+    pub(crate) fn get_path_with_query(&self) -> &str {
+        &self.path[self.get_path_start()..]
+    }
+
+    pub(crate) fn get_path_without_query(&self) -> &str {
+        let path = self.get_path_start();
+
+        let query = match self.path[path..].find('?') {
+            None => self.path.len(),
+            Some(u) => u,
         };
 
         &self.path[path..query]
