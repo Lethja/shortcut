@@ -325,7 +325,7 @@ where
 async fn serve_existing_file<T>(
     cache_file_path: &PathBuf,
     mut stream: T,
-    client_request_header: &HttpRequestHeader,
+    client_request_header: &HttpRequestHeader<'_>,
 ) -> ConnectionReturn
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -429,8 +429,11 @@ where
 async fn fetch_and_serve_file<T>(
     cache_file_path: PathBuf,
     mut stream: T,
+    #[cfg(not(feature = "https"))]
+    host: String,
+    #[cfg(feature = "https")]
     mut host: String,
-    client_request_header: HttpRequestHeader,
+    client_request_header: HttpRequestHeader<'_>,
     #[cfg(feature = "https")] certificates: &CertificateSetup,
     #[cfg(feature = "https")] https: bool,
 ) -> ConnectionReturn
@@ -439,7 +442,7 @@ where
 {
     async fn fetch<R, S>(
         cache_file_path: &PathBuf,
-        client_request_header: &HttpRequestHeader,
+        client_request_header: &HttpRequestHeader<'_>,
         host: &String,
         fetch_buf_reader: &mut BufReader<&mut R>,
         mut stream: &mut S,

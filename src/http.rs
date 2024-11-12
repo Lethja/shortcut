@@ -147,9 +147,9 @@ pub(crate) fn keep_alive_if(header: &HttpRequestHeader) -> ConnectionReturn {
     }
 }
 
-pub struct HttpRequestHeader {
+pub struct HttpRequestHeader<'a> {
     pub method: HttpRequestMethod,
-    pub request: Uri,
+    pub request: Uri<'a>,
     pub version: HttpVersion,
     pub headers: HashMap<String, String>,
 }
@@ -199,7 +199,7 @@ fn assemble_mandatory_http_request_header_line(method: &str, path: &str, version
     format!("{method} {path} {version}")
 }
 
-pub(crate) async fn get_cache_name(url: &HttpRequestHeader) -> Option<PathBuf> {
+pub(crate) async fn get_cache_name(url: &HttpRequestHeader<'_>) -> Option<PathBuf> {
     let store_path = match std::env::var(X_PROXY_CACHE_PATH) {
         Ok(s) => s,
         Err(e) => {
@@ -225,7 +225,7 @@ pub(crate) async fn get_cache_name(url: &HttpRequestHeader) -> Option<PathBuf> {
     Some(path)
 }
 
-impl HttpRequestHeader {
+impl HttpRequestHeader<'_> {
     pub(crate) async fn from_tcp_buffer_async<T>(value: &mut BufReader<T>) -> Option<Self>
     where
         T: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -276,7 +276,7 @@ impl HttpRequestHeader {
         let request = Uri::from(request);
 
         match request.kind() {
-            UriKind::Invalid | UriKind::RelativeAddress | UriKind::RelativePath => None,
+            UriKind::Invalid | UriKind::RelativeAddress => None,
             _ => Some(HttpRequestHeader {
                 method,
                 request,
