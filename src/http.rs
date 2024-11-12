@@ -1,3 +1,4 @@
+use crate::conn::{Uri, UriKind};
 use crate::http::ConnectionReturn::{Close, Keep};
 use std::{
     collections::HashMap,
@@ -148,7 +149,7 @@ pub(crate) fn keep_alive_if(header: &HttpRequestHeader) -> ConnectionReturn {
 
 pub struct HttpRequestHeader {
     pub method: HttpRequestMethod,
-    pub path: String,
+    pub request: Uri,
     pub version: HttpVersion,
     pub headers: HashMap<String, String>,
 }
@@ -162,12 +163,10 @@ fn get_mandatory_http_request_header_line(
     }
 
     let method = HttpRequestMethod::from(elements[0]);
-    let path = elements[1];
+    let path = elements[1].to_string();
     if method == HttpRequestMethod::Get && !path.starts_with('/') && !path.contains("://") {
         return None;
     }
-
-    let path = path.to_string();
 
     let version = elements[2];
     let version = match version.to_uppercase().as_str() {
@@ -266,61 +265,67 @@ impl HttpRequestHeader {
             None => return None,
             Some(s) => s,
         };
-        let (method, path, version) = match get_mandatory_http_request_header_line(mandatory_line) {
-            None => return None,
-            Some((a, b, c)) => (a, b, c),
-        };
+        let (method, request, version) =
+            match get_mandatory_http_request_header_line(mandatory_line) {
+                None => return None,
+                Some((a, b, c)) => (a, b, c),
+            };
         let headers = get_http_headers(&lines);
         consume_http_header(value);
 
-        /* TODO: validate path as a uri */
+        let request = Uri::from(request);
 
-        Some(HttpRequestHeader {
-            method,
-            path,
-            version,
-            headers,
-        })
+        match request.kind() {
+            UriKind::Invalid | UriKind::RelativeAddress | UriKind::RelativePath => None,
+            _ => Some(HttpRequestHeader {
+                method,
+                request,
+                version,
+                headers,
+            }),
+        }
     }
 
     pub(crate) fn has_relative_path(&self) -> bool {
-        self.path.starts_with('/')
+        self.request.uri.starts_with('/')
     }
 
     pub(crate) fn get_scheme(&self) -> Option<&str> {
-        let scheme_divider = self.path.find("://").unwrap_or(0);
+        let scheme_divider = self.request.uri.find("://").unwrap_or(0);
         if scheme_divider == 0 {
             return None;
         }
 
-        Some(&self.path[..scheme_divider])
+        Some(&self.request.uri[..scheme_divider])
     }
 
     pub(crate) fn get_host(&self) -> Option<&str> {
-        if self.path.starts_with('/') {
+        if self.request.uri.starts_with('/') {
             return None;
         };
 
-        let start = self.path.find("://").map_or(0, |u| u + 3);
-        let finish = self.path[start..].find('/').unwrap_or(self.path.len());
+        let start = self.request.uri.find("://").map_or(0, |u| u + 3);
+        let finish = self.request.uri[start..]
+            .find('/')
+            .unwrap_or(self.request.uri.len());
 
-        Some(&self.path[start..start + finish])
+        Some(&self.request.uri[start..start + finish])
     }
 
     pub(crate) fn get_port(&self) -> Option<u16> {
-        if self.path.starts_with('/') {
+        if self.request.uri.starts_with('/') {
             return None;
         }
 
-        let scheme = self.path.find("://").unwrap_or(0);
-        let path = self.path[scheme + 3..]
+        let scheme = self.request.uri.find("://").unwrap_or(0);
+        let path = self.request.uri[scheme + 3..]
             .find('/')
-            .unwrap_or(self.path.len() - 1);
-        let range = &self.path[scheme + 3..path];
+            .unwrap_or(self.request.uri.len() - 1);
+        let range = &self.request.uri[scheme + 3..path];
 
         let port = match range.find(':') {
             None => return None,
-            Some(p) => match self.path[p..].parse::<u16>() {
+            Some(p) => match self.request.uri[p..].parse::<u16>() {
                 Ok(p) => p,
                 Err(_) => return None,
             },
@@ -330,13 +335,13 @@ impl HttpRequestHeader {
     }
 
     fn get_path_start(&self) -> usize {
-        match self.path.find('/') {
+        match self.request.uri.find('/') {
             Some(0) => 0usize,
             Some(mut u) => {
-                if u + 1 < self.path.len() - 2 && self.path[u - 1..].contains("://") {
-                    u = u + self.path[u + 2..]
+                if u + 1 < self.request.uri.len() - 2 && self.request.uri[u - 1..].contains("://") {
+                    u = u + self.request.uri[u + 2..]
                         .find('/')
-                        .map_or(self.path.len(), |p| p + 2);
+                        .map_or(self.request.uri.len(), |p| p + 2);
                 }
                 u
             }
@@ -345,22 +350,25 @@ impl HttpRequestHeader {
     }
 
     pub(crate) fn get_path_with_query(&self) -> &str {
-        &self.path[self.get_path_start()..]
+        &self.request.uri[self.get_path_start()..]
     }
 
     pub(crate) fn get_path_without_query(&self) -> &str {
         let path = self.get_path_start();
 
-        let query = match self.path[path..].find('?') {
-            None => self.path.len(),
+        let query = match self.request.uri[path..].find('?') {
+            None => self.request.uri.len(),
             Some(u) => u,
         };
 
-        &self.path[path..query]
+        &self.request.uri[path..query]
     }
 
     pub(crate) fn get_query(&self) -> Option<String> {
-        self.path.find('?').map(|u| self.path[u..].to_string())
+        self.request
+            .uri
+            .find('?')
+            .map(|u| self.request.uri[u..].to_string())
     }
 
     pub(crate) fn generate(&self) -> String {

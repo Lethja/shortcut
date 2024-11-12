@@ -1,18 +1,25 @@
 #[cfg(feature = "https")]
 mod cert;
+mod conn;
 mod http;
 
 #[cfg(feature = "https")]
-use crate::cert::{setup_certificates, CertificateSetup, CERT_QUERY};
-use crate::http::{
-    fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if,
-    url_is_http, ConnectionReturn,
-    ConnectionReturn::{Close, Keep},
-    HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
-    BUFFER_SIZE, X_PROXY_CACHE_PATH,
+use crate::{
+    cert::{setup_certificates, CertificateSetup, CERT_QUERY},
+    ConnectionReturn::Upgrade,
 };
-#[cfg(feature = "https")]
-use crate::ConnectionReturn::Upgrade;
+
+use crate::{
+    conn::Uri,
+    http::{
+        fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if,
+        url_is_http, ConnectionReturn,
+        ConnectionReturn::{Close, Keep},
+        HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
+        BUFFER_SIZE, X_PROXY_CACHE_PATH,
+    },
+};
+
 #[cfg(feature = "https")]
 use rustls::pki_types::ServerName;
 #[cfg(feature = "https")]
@@ -303,7 +310,7 @@ where
             if stream.write_all(response.as_bytes()).await.is_err() {
                 return Close;
             }
-            Upgrade(client_request_header.path)
+            Upgrade(client_request_header.request.uri.to_string())
         }
         _ => {
             let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
@@ -444,7 +451,7 @@ where
     {
         let fetch_request = HttpRequestHeader {
             method: HttpRequestMethod::Get,
-            path: client_request_header.get_path_with_query().to_string(),
+            request: Uri::from(client_request_header.get_path_with_query().to_string()),
             version: HttpVersion::from(client_request_header.version.as_str()),
             headers: {
                 let mut headers = client_request_header.headers.clone();
