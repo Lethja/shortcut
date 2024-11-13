@@ -61,6 +61,13 @@ impl<'a> Uri<'a> {
         UriKind::Invalid
     }
 
+    pub(crate) fn host_and_port(&self) -> Option<String> {
+        match (self.host, self.port) {
+            (Some(h), Some(p)) => format!("{h}:{p}").into(),
+            (_, _) => None,
+        }
+    }
+
     pub(crate) fn update_references(&'a mut self) {
         fn find_scheme(value: &str) -> Option<&str> {
             match value.find("://") {

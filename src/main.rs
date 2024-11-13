@@ -12,8 +12,7 @@ use crate::{
 use crate::{
     conn::Uri,
     http::{
-        fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if,
-        url_is_http, ConnectionReturn,
+        fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if, ConnectionReturn,
         ConnectionReturn::{Close, Keep},
         HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
         BUFFER_SIZE, X_PROXY_CACHE_PATH,
@@ -266,7 +265,7 @@ where
                 keep_alive_if(&client_request_header)
             }
             _ => {
-                let host = match url_is_http(&client_request_header) {
+                let host = match client_request_header.request.host_and_port() {
                     None => {
                         let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
                         if stream.write_all(response.as_bytes()).await.is_err() {
@@ -274,7 +273,7 @@ where
                         }
                         return keep_alive_if(&client_request_header);
                     }
-                    Some(h) => h.to_string(),
+                    Some(h) => h,
                 };
 
                 let cache_file_path = match get_cache_name(&client_request_header).await {

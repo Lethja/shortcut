@@ -588,26 +588,6 @@ impl HttpResponseHeader {
     }
 }
 
-pub(crate) fn url_is_http(url: &HttpRequestHeader) -> Option<String> {
-    match url.request.scheme {
-        None => return None,
-        Some(p) => {
-            if !p.starts_with("http") {
-                return None;
-            }
-        }
-    }
-
-    let host = match url.request.host {
-        None => return None,
-        Some(s) => s,
-    };
-
-    let port = url.request.port.unwrap_or(80);
-
-    Some(format!("{host}:{port}"))
-}
-
 pub(crate) async fn fetch_and_serve_known_length<T, R>(
     cache_file_path: &PathBuf,
     stream: &mut T,
