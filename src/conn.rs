@@ -135,25 +135,16 @@ impl<'a> Uri<'a> {
                         Some(x) => x + 3,
                     };
 
-                    let host = match value[scheme..].find("/") {
+                    match value[scheme..].find("/") {
                         None => return (None, None, None),
                         Some(x) => x + scheme,
-                    };
-
-                    host
+                    }
                 }
             };
 
-            let query;
-            let end = match value.find('?') {
-                None => {
-                    query = None;
-                    value.len()
-                }
-                Some(x) => {
-                    query = Some(&value[x + 1..]);
-                    x
-                }
+            let (end, query) = match value.find('?') {
+                None => (value.len(), None),
+                Some(x) => (x, Some(&value[x + 1..])),
             };
 
             (Some(&value[start..end]), query, Some(&value[start..]))

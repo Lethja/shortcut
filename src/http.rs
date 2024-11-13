@@ -219,10 +219,10 @@ pub(crate) async fn get_cache_name(url: &HttpRequestHeader<'_>) -> Option<PathBu
         None => return None,
         Some(s) => {
             let p = PathBuf::from(s);
-            let l = p
-                .file_name()
-                .and_then(|s| Some(s.to_string_lossy().to_string()))?;
-            l
+            match p.file_name().map(|s| s.to_string_lossy().to_string()) {
+                None => return None,
+                Some(p) => p,
+            }
         }
     };
 

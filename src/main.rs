@@ -458,7 +458,7 @@ where
                 if stream.write_all(response.as_bytes()).await.is_err() {
                     return Close;
                 }
-                return keep_alive_if(&client_request_header);
+                return keep_alive_if(client_request_header);
             }
             Some(s) => s.to_string(),
         };
@@ -480,7 +480,7 @@ where
                 if stream.write_all(response.as_bytes()).await.is_err() {
                     return Close;
                 }
-                return keep_alive_if(&client_request_header);
+                return keep_alive_if(client_request_header);
             }
             Some(s) => s,
         };
@@ -495,7 +495,7 @@ where
                 if stream.write_all(response.as_bytes()).await.is_err() {
                     return Close;
                 }
-                return keep_alive_if(&client_request_header);
+                return keep_alive_if(client_request_header);
             }
         }
 
@@ -507,7 +507,7 @@ where
                     if stream.write_all(response.as_bytes()).await.is_err() {
                         return Close;
                     }
-                    return keep_alive_if(&client_request_header);
+                    return keep_alive_if(client_request_header);
                 }
                 Some(s) => s,
             };
@@ -530,7 +530,7 @@ where
                         if stream.write_all(response.as_bytes()).await.is_err() {
                             return Close;
                         }
-                        return keep_alive_if(&client_request_header);
+                        return keep_alive_if(client_request_header);
                     }
                     Some(p) => p,
                 };
@@ -549,7 +549,7 @@ where
                         if stream.write_all(response.as_bytes()).await.is_err() {
                             return Close;
                         }
-                        return keep_alive_if(&client_request_header);
+                        return keep_alive_if(client_request_header);
                     }
                     Ok(file) => file,
                 };
@@ -559,7 +559,7 @@ where
                 if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
                     if v.to_lowercase() == "chunked" {
                         (write_stream, write_file) = fetch_and_serve_chunk(
-                            &cache_file_path,
+                            cache_file_path,
                             &mut stream,
                             fetch_buf_reader,
                             &mut file,
@@ -570,7 +570,7 @@ where
                         if stream.write_all(response.as_bytes()).await.is_err() {
                             return Close;
                         }
-                        return keep_alive_if(&client_request_header);
+                        return keep_alive_if(client_request_header);
                     }
                 } else {
                     let content_length = match fetch_response_header.headers.get("Content-Length") {
@@ -579,7 +579,7 @@ where
                             if stream.write_all(response.as_bytes()).await.is_err() {
                                 return Close;
                             }
-                            return keep_alive_if(&client_request_header);
+                            return keep_alive_if(client_request_header);
                         }
                         Some(s) => match s.parse::<u64>() {
                             Ok(u) => u,
@@ -588,13 +588,13 @@ where
                                 if stream.write_all(response.as_bytes()).await.is_err() {
                                     return Close;
                                 }
-                                return keep_alive_if(&client_request_header);
+                                return keep_alive_if(client_request_header);
                             }
                         },
                     };
 
                     (write_stream, write_file) = fetch_and_serve_known_length(
-                        &cache_file_path,
+                        cache_file_path,
                         &mut stream,
                         content_length,
                         &mut *fetch_buf_reader,
@@ -627,7 +627,7 @@ where
                     let _ = remove_file(cache_file_path).await;
                     return Close;
                 }
-                keep_alive_if(&client_request_header)
+                keep_alive_if(client_request_header)
             }
             #[cfg(feature = "https")]
             302 => {
@@ -638,7 +638,7 @@ where
                             if stream.write_all(response.as_bytes()).await.is_err() {
                                 return Close;
                             }
-                            return keep_alive_if(&client_request_header);
+                            return keep_alive_if(client_request_header);
                         }
                         Some(s) => s,
                     };
@@ -646,13 +646,13 @@ where
                 } else {
                     let pass_through = fetch_response_header.generate();
                     let _ = stream.write_all(pass_through.as_bytes()).await;
-                    keep_alive_if(&client_request_header)
+                    keep_alive_if(client_request_header)
                 }
             }
             _ => {
                 let pass_through = fetch_response_header.generate();
                 let _ = stream.write_all(pass_through.as_bytes()).await;
-                keep_alive_if(&client_request_header)
+                keep_alive_if(client_request_header)
             }
         }
     }
