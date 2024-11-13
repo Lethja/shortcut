@@ -144,18 +144,23 @@ impl<'a> Uri<'a> {
                 }
             };
 
+            let mut query = None;
+
             let end = match value.find('?') {
                 None => value.len(),
-                Some(x) => x,
+                Some(x) => {
+                    query = Some(&value[x+1..]);
+                    x
+                },
             };
 
-            (Some(&value[start..end]), Some(&value[end..]), Some(&value[start..]))
+            (Some(&value[start..end]), query, Some(&value[start..]))
         }
 
         self.scheme = find_scheme(&self.uri);
         self.host = find_host(&self.uri);
         self.port = find_port(&self.uri);
-        (self.path, self.path_and_query, self.query) = slice_path(&self.uri);
+        (self.path, self.query, self.path_and_query) = slice_path(&self.uri);
     }
 }
 
@@ -172,6 +177,7 @@ mod tests {
         assert_eq!(uri.port, Some(80));
         assert_eq!(uri.path, Some("/path"));
         assert_eq!(uri.query, None);
+        assert_eq!(uri.path_and_query, uri.path);
     }
 
     #[test]
@@ -183,6 +189,7 @@ mod tests {
         assert_eq!(uri.port, Some(80));
         assert_eq!(uri.path, Some("/path"));
         assert_eq!(uri.query, Some("query=something"));
+        assert_eq!(uri.path_and_query, Some("/path?query=something"));
     }
 
     #[test]
@@ -194,6 +201,7 @@ mod tests {
         assert_eq!(uri.port, Some(8443));
         assert_eq!(uri.path, Some("/path"));
         assert_eq!(uri.query, Some("query=something"));
+        assert_eq!(uri.path_and_query, Some("/path?query=something"));
     }
 
     #[test]
@@ -205,6 +213,7 @@ mod tests {
         assert_eq!(uri.port, None);
         assert_eq!(uri.path, Some("/path"));
         assert_eq!(uri.query, Some("query=something"));
+        assert_eq!(uri.path_and_query, Some("/path?query=something"));
     }
 
     #[test]
@@ -216,6 +225,7 @@ mod tests {
         assert_eq!(uri.port, None);
         assert_eq!(uri.path, Some("/path/to/resource"));
         assert_eq!(uri.query, None);
+        assert_eq!(uri.path_and_query, Some("/path/to/resource"));
     }
 
     #[test]
@@ -227,6 +237,7 @@ mod tests {
         assert_eq!(uri.port, None);
         assert_eq!(uri.path, Some("/path/to/resource"));
         assert_eq!(uri.query, Some("query=something"));
+        assert_eq!(uri.path_and_query, Some("/path/to/resource?query=something"));
     }
 
     #[test]
@@ -238,5 +249,6 @@ mod tests {
         assert_eq!(uri.port, None);
         assert_eq!(uri.path, None);
         assert_eq!(uri.query, None);
+        assert_eq!(uri.path_and_query, None);
     }
 }
