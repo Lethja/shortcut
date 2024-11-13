@@ -453,12 +453,14 @@ where
         S: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         let path_and_query = match client_request_header.request.path_and_query {
-            None => {let response = HttpResponseStatus::BAD_REQUEST.to_response();
+            None => {
+                let response = HttpResponseStatus::BAD_REQUEST.to_response();
                 if stream.write_all(response.as_bytes()).await.is_err() {
                     return Close;
                 }
-                return keep_alive_if(&client_request_header);}
-            Some(s) => {s.to_string()}
+                return keep_alive_if(&client_request_header);
+            }
+            Some(s) => s.to_string(),
         };
 
         let fetch_request = HttpRequestHeader {
@@ -473,12 +475,14 @@ where
         };
 
         let fetch_request_data = match fetch_request.generate() {
-            None => {let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+            None => {
+                let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
                 if stream.write_all(response.as_bytes()).await.is_err() {
                     return Close;
                 }
-                return keep_alive_if(&client_request_header);}
-            Some(s) => {s}
+                return keep_alive_if(&client_request_header);
+            }
+            Some(s) => s,
         };
 
         match fetch_buf_reader

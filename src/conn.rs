@@ -144,14 +144,16 @@ impl<'a> Uri<'a> {
                 }
             };
 
-            let mut query = None;
-
+            let query;
             let end = match value.find('?') {
-                None => value.len(),
+                None => {
+                    query = None;
+                    value.len()
+                }
                 Some(x) => {
-                    query = Some(&value[x+1..]);
+                    query = Some(&value[x + 1..]);
                     x
-                },
+                }
             };
 
             (Some(&value[start..end]), query, Some(&value[start..]))
@@ -237,7 +239,10 @@ mod tests {
         assert_eq!(uri.port, None);
         assert_eq!(uri.path, Some("/path/to/resource"));
         assert_eq!(uri.query, Some("query=something"));
-        assert_eq!(uri.path_and_query, Some("/path/to/resource?query=something"));
+        assert_eq!(
+            uri.path_and_query,
+            Some("/path/to/resource?query=something")
+        );
     }
 
     #[test]
