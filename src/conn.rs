@@ -6,10 +6,10 @@ pub(crate) struct Uri<'a> {
     pub(crate) port: Option<u16>,
     pub(crate) path: Option<&'a str>,
     pub(crate) query: Option<&'a str>,
+    pub(crate) path_and_query: Option<&'a str>,
 }
 
-#[derive(Debug)]
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum UriKind {
     AbsoluteAddress,
     AbsolutePath,
@@ -32,6 +32,7 @@ impl<'a> Uri<'a> {
             port: None,
             path: None,
             query: None,
+            path_and_query: None,
         };
 
         let uri_ref: *mut Uri<'a> = &mut uri;
@@ -74,7 +75,7 @@ impl<'a> Uri<'a> {
                 false => {
                     let start = match value.find("://") {
                         None => 0,
-                        Some(x) => x + 3
+                        Some(x) => x + 3,
                     };
 
                     let end = match value[start..].find(':') {
@@ -87,7 +88,7 @@ impl<'a> Uri<'a> {
 
                     let slice = &value[start..end];
                     if slice.contains('.') {
-                        return Some(slice)
+                        return Some(slice);
                     }
                     None
                 }
@@ -108,7 +109,7 @@ impl<'a> Uri<'a> {
         fn find_port(value: &str) -> Option<u16> {
             let start = match value.find("://") {
                 None => 0,
-                Some(x) => x + 3
+                Some(x) => x + 3,
             };
 
             let end = match value[start..].find('/') {
@@ -118,14 +119,14 @@ impl<'a> Uri<'a> {
 
             match value[start..end].find(':') {
                 None => scheme_to_port(value),
-                Some(p) => match value[p+start+1..end].parse::<u16>() {
+                Some(p) => match value[p + start + 1..end].parse::<u16>() {
                     Ok(p) => Some(p),
                     Err(_) => None,
                 },
             }
         }
 
-        fn find_path(value: &str) -> Option<&str> {
+        fn slice_path(value: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
             let start = match value.starts_with('/') {
                 true => 0,
                 false => {
@@ -135,7 +136,7 @@ impl<'a> Uri<'a> {
                     };
 
                     let host = match value[scheme..].find("/") {
-                        None => return None,
+                        None => return (None, None, None),
                         Some(x) => x + scheme,
                     };
 
@@ -148,33 +149,13 @@ impl<'a> Uri<'a> {
                 Some(x) => x,
             };
 
-            Some(&value[start..end])
-        }
-
-        fn find_query(value: &str) -> Option<&str> {
-            let scheme = match value.find("://") {
-                None => 0,
-                Some(x) => x + 3,
-            };
-
-            let host = match value[scheme..].find("/") {
-                None => return None,
-                Some(x) => x + scheme + 1,
-            };
-
-            let query = match value[host..].find("?") {
-                None => return None,
-                Some(x) => x + host + 1,
-            };
-
-            Some(&value[query..])
+            (Some(&value[start..end]), Some(&value[end..]), Some(&value[start..]))
         }
 
         self.scheme = find_scheme(&self.uri);
         self.host = find_host(&self.uri);
         self.port = find_port(&self.uri);
-        self.path = find_path(&self.uri);
-        self.query = find_query(&self.uri);
+        (self.path, self.path_and_query, self.query) = slice_path(&self.uri);
     }
 }
 

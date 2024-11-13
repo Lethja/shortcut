@@ -26,6 +26,7 @@ use rustls::pki_types::ServerName;
 use std::convert::TryFrom;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
+use crate::conn::UriKind;
 #[cfg(feature = "https")]
 use crate::http::ConnectionReturn::Redirect;
 use tokio::{
@@ -198,9 +199,9 @@ where
     };
 
     match client_request_header.method {
-        HttpRequestMethod::Get => {
-            if client_request_header.has_relative_path() {
-                match client_request_header.get_query() {
+        HttpRequestMethod::Get => match client_request_header.request.kind() {
+            UriKind::AbsolutePath => {
+                match client_request_header.request.query {
                     #[cfg(feature = "https")]
                     Some(q) => {
                         if q == CERT_QUERY {
@@ -261,9 +262,10 @@ where
                             return Close;
                         }
                     }
-                };
+                }
                 keep_alive_if(&client_request_header)
-            } else {
+            }
+            _ => {
                 let host = match url_is_http(&client_request_header) {
                     None => {
                         let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
@@ -303,7 +305,7 @@ where
                     .await;
                 }
             }
-        }
+        },
         #[cfg(feature = "https")]
         HttpRequestMethod::Connect => {
             let response = HttpResponseStatus::OK.to_empty_response();
@@ -429,10 +431,8 @@ where
 async fn fetch_and_serve_file<T>(
     cache_file_path: PathBuf,
     mut stream: T,
-    #[cfg(not(feature = "https"))]
-    host: String,
-    #[cfg(feature = "https")]
-    mut host: String,
+    #[cfg(not(feature = "https"))] host: String,
+    #[cfg(feature = "https")] mut host: String,
     client_request_header: HttpRequestHeader<'_>,
     #[cfg(feature = "https")] certificates: &CertificateSetup,
     #[cfg(feature = "https")] https: bool,
@@ -452,9 +452,18 @@ where
         R: AsyncReadExt + AsyncWriteExt + Unpin,
         S: AsyncReadExt + AsyncWriteExt + Unpin,
     {
+        let path_and_query = match client_request_header.request.path_and_query {
+            None => {let response = HttpResponseStatus::BAD_REQUEST.to_response();
+                if stream.write_all(response.as_bytes()).await.is_err() {
+                    return Close;
+                }
+                return keep_alive_if(&client_request_header);}
+            Some(s) => {s.to_string()}
+        };
+
         let fetch_request = HttpRequestHeader {
             method: HttpRequestMethod::Get,
-            request: Uri::from(client_request_header.get_path_with_query().to_string()),
+            request: Uri::from(path_and_query),
             version: HttpVersion::from(client_request_header.version.as_str()),
             headers: {
                 let mut headers = client_request_header.headers.clone();
@@ -463,7 +472,14 @@ where
             },
         };
 
-        let fetch_request_data = fetch_request.generate();
+        let fetch_request_data = match fetch_request.generate() {
+            None => {let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
+                if stream.write_all(response.as_bytes()).await.is_err() {
+                    return Close;
+                }
+                return keep_alive_if(&client_request_header);}
+            Some(s) => {s}
+        };
 
         match fetch_buf_reader
             .write_all(fetch_request_data.as_bytes())
