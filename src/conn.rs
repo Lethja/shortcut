@@ -61,6 +61,10 @@ impl<'a> Uri<'a> {
         UriKind::Invalid
     }
 
+    pub(crate) fn same_host_as(&self, other: &Uri) -> bool {
+        other.kind() == UriKind::AbsolutePath || self.host == other.host && self.port == other.port
+    }
+
     pub(crate) fn host_and_port(&self) -> Option<String> {
         match (self.host, self.port) {
             (Some(h), Some(p)) => format!("{h}:{p}").into(),
