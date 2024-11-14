@@ -5,9 +5,7 @@ use tokio::{
 };
 
 use crate::conn::{
-    FetchRequestError::{
-        HostNotFound, InvalidDomainName, InvalidScheme, TcpConnectionError, TlsConnectionError,
-    },
+    FetchRequestError::*,
     StreamType::*,
 };
 
