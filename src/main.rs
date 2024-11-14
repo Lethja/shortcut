@@ -31,7 +31,10 @@ use crate::conn::UriKind;
 use crate::http::ConnectionReturn::Redirect;
 use tokio::{
     fs::{create_dir_all, remove_file, File},
-    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom},
+    io::{
+        AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
+        SeekFrom,
+    },
     net::{TcpListener, TcpStream},
     sync::Semaphore,
     time::timeout,
@@ -176,7 +179,7 @@ async fn handle_connection<T>(
     #[cfg(feature = "https")] host: Option<&String>,
 ) -> ConnectionReturn
 where
-    T: AsyncReadExt + AsyncWriteExt + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     let mut client_buf_reader = BufReader::new(&mut stream);
 
@@ -325,7 +328,7 @@ async fn serve_existing_file<T>(
     client_request_header: &HttpRequestHeader<'_>,
 ) -> ConnectionReturn
 where
-    T: AsyncReadExt + AsyncWriteExt + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     let mut file = match File::open(cache_file_path).await {
         Ok(f) => f,
@@ -433,7 +436,7 @@ async fn fetch_and_serve_file<T>(
     #[cfg(feature = "https")] https: bool,
 ) -> ConnectionReturn
 where
-    T: AsyncReadExt + AsyncWriteExt + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     async fn fetch<R, S>(
         cache_file_path: &PathBuf,
@@ -444,8 +447,8 @@ where
         #[cfg(feature = "https")] https: bool,
     ) -> ConnectionReturn
     where
-        R: AsyncReadExt + AsyncWriteExt + Unpin,
-        S: AsyncReadExt + AsyncWriteExt + Unpin,
+        R: AsyncRead + AsyncWrite + Unpin,
+        S: AsyncRead + AsyncWrite + Unpin,
     {
         let path_and_query = match client_request_header.request.path_and_query {
             None => {
