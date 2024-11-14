@@ -1,3 +1,17 @@
+use std::pin::Pin;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
+
+#[cfg(feature = "https")]
+use {
+    std::convert::TryFrom,
+    tokio_rustls::{client, server},
+};
+
+use crate::conn::StreamType::*;
+
 #[allow(dead_code)]
 pub(crate) struct Uri<'a> {
     pub(crate) uri: String,
@@ -20,6 +34,12 @@ pub(crate) enum UriKind {
 impl<'a> From<String> for Uri<'a> {
     fn from(uri: String) -> Self {
         Uri::new(uri)
+    }
+}
+
+impl<'a> From<&String> for Uri<'a> {
+    fn from(uri: &String) -> Self {
+        Uri::new(uri.clone())
     }
 }
 
@@ -165,6 +185,101 @@ impl<'a> Uri<'a> {
         self.host = find_host(&self.uri);
         self.port = find_port(&self.uri);
         (self.path, self.query, self.path_and_query) = slice_path(&self.uri);
+    }
+}
+
+pub(crate) trait AsyncReadWriteExt: AsyncRead + AsyncWrite + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Unpin> AsyncReadWriteExt for T {}
+
+enum StreamType {
+    Unencrypted(TcpStream),
+    #[cfg(feature = "https")]
+    TlsClient(client::TlsStream<TcpStream>),
+    #[cfg(feature = "https")]
+    TlsServer(server::TlsStream<TcpStream>),
+}
+
+pub(crate) struct FetchRequest<'a> {
+    uri: Uri<'a>,
+    redirect: Option<Uri<'a>>,
+    stream: StreamType,
+}
+
+impl FetchRequest<'_> {
+    async fn from_uri(
+        value: &Uri<'_>,
+        #[cfg(feature = "https")] certificates: crate::cert::CertificateSetup,
+    ) -> Option<Self> {
+        let host = match value.host_and_port() {
+            None => return None,
+            Some(s) => s,
+        };
+
+        let redirect = None;
+
+        #[cfg(feature = "https")]
+        if value.scheme.is_some_and(|s| s == "https://") {
+            let dns = match value.host {
+                None => return None,
+                Some(o) => o.to_string(),
+            };
+
+            use tokio_rustls::rustls::pki_types::ServerName;
+            let domain = match ServerName::try_from(dns) {
+                Ok(d) => d,
+                Err(_) => return None,
+            };
+
+            let stream = match TcpStream::connect(host).await {
+                Ok(o) => o,
+                Err(_) => return None,
+            };
+
+            let stream: StreamType = match certificates.client_config.connect(domain, stream).await
+            {
+                Ok(s) => TlsClient(s),
+                Err(_) => return None,
+            };
+
+            let uri = Uri::from(&value.uri);
+
+            return Some(Self {
+                uri,
+                redirect,
+                stream,
+            });
+        }
+
+        let scheme = match value.scheme {
+            None => return None,
+            Some(s) => s,
+        };
+
+        if scheme == "http://" {
+            let stream = match TcpStream::connect(host).await {
+                Ok(o) => Unencrypted(o),
+                Err(_) => return None,
+            };
+
+            let uri = Uri::from(&value.uri);
+            return Some(FetchRequest {
+                uri,
+                redirect,
+                stream,
+            });
+        }
+
+        None
+    }
+
+    pub(crate) fn as_stream(&mut self) -> Pin<Box<dyn AsyncReadWriteExt + '_>> {
+        match self.stream {
+            Unencrypted(ref mut stream) => Box::pin(stream),
+            #[cfg(feature = "https")]
+            TlsClient(ref mut stream) => Box::pin(stream),
+            #[cfg(feature = "https")]
+            TlsServer(ref mut stream) => Box::pin(stream),
+        }
     }
 }
 

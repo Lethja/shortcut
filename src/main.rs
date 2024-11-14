@@ -12,7 +12,8 @@ use crate::{
 use crate::{
     conn::Uri,
     http::{
-        fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if, ConnectionReturn,
+        fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if,
+        ConnectionReturn,
         ConnectionReturn::{Close, Keep},
         HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
         BUFFER_SIZE, X_PROXY_CACHE_PATH,
@@ -131,25 +132,20 @@ async fn listen_for(
     tokio::spawn(async move {
         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
 
+        #[cfg(feature = "https")]
         loop {
-            match handle_connection(
-                &mut stream,
-                #[cfg(feature = "https")]
-                &certificates,
-                #[cfg(feature = "https")]
-                None,
-            )
-            .await
-            {
+            match handle_connection(&mut stream, &certificates, None).await {
                 Keep => continue,
-                #[cfg(feature = "https")]
                 Upgrade(s) => match listen_for_https(&mut stream, &certificates, s).await {
                     Keep => continue,
                     _ => return,
                 },
-                _ => break,
+                _ => return,
             }
         }
+
+        #[cfg(not(feature = "https"))]
+        while let Keep = handle_connection(&mut stream).await {}
     });
 }
 
