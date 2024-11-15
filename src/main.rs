@@ -31,10 +31,7 @@ use crate::conn::UriKind;
 use crate::http::ConnectionReturn::Redirect;
 use tokio::{
     fs::{create_dir_all, remove_file, File},
-    io::{
-        AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
-        SeekFrom,
-    },
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, SeekFrom},
     net::{TcpListener, TcpStream},
     sync::Semaphore,
     time::timeout,
