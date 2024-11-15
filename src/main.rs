@@ -20,15 +20,15 @@ use crate::{
     },
 };
 
+use crate::conn::{AsyncReadWriteExt, FetchRequest, FetchRequestError, UriKind};
+#[cfg(feature = "https")]
+use crate::http::ConnectionReturn::Redirect;
 #[cfg(feature = "https")]
 use rustls::pki_types::ServerName;
 #[cfg(feature = "https")]
 use std::convert::TryFrom;
+use std::pin::Pin;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-
-use crate::conn::UriKind;
-#[cfg(feature = "https")]
-use crate::http::ConnectionReturn::Redirect;
 use tokio::{
     fs::{create_dir_all, remove_file, File},
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, SeekFrom},
@@ -435,6 +435,73 @@ async fn fetch_and_serve_file<T>(
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
+    let uri = Uri::from(&host);
+    let mut fetch_request = match FetchRequest::from_uri(
+        &uri,
+        #[cfg(feature = "https")]
+        *certificates,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            let response = match e {
+                _ => HttpResponseStatus::BAD_REQUEST,
+            };
+            if stream
+                .write_all(response.to_response().as_bytes())
+                .await
+                .is_err()
+            {
+                return Close;
+            }
+            return keep_alive_if(&client_request_header);
+        }
+    };
+
+    if let Err(e) = fetch_request.connect().await {
+        let response = match e {
+            _ => HttpResponseStatus::BAD_REQUEST,
+        };
+        if stream
+            .write_all(response.to_response().as_bytes())
+            .await
+            .is_err()
+        {
+            return Close;
+        }
+        return keep_alive_if(&client_request_header);
+    }
+
+    let fetch_stream = match fetch_request.as_stream() {
+        None => {
+            if stream
+                .write_all(
+                    HttpResponseStatus::INTERNAL_SERVER_ERROR
+                        .to_response()
+                        .as_bytes(),
+                )
+                .await
+                .is_err()
+            {
+                return Close;
+            }
+            return keep_alive_if(&client_request_header);
+        }
+        Some(f) => f,
+    };
+
+    //TODO: Refactor fetch parameters
+    let mut fetch_buf_reader = BufReader::new(fetch_stream);
+
+    return fetch(
+        &cache_file_path,
+        &client_request_header,
+        &host,
+        &mut fetch_buf_reader,
+        &mut stream,
+        #[cfg(feature = "https")]
+        true,
+    );
+
     async fn fetch<R, S>(
         cache_file_path: &PathBuf,
         client_request_header: &HttpRequestHeader<'_>,
@@ -651,74 +718,4 @@ where
             }
         }
     }
-
-    let mut fetch_stream = match TcpStream::connect(&host).await {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Error: unable to connect to '{host}': {e}");
-            let response = HttpResponseStatus::BAD_GATEWAY.to_response();
-            if stream.write_all(response.as_bytes()).await.is_err() {
-                return Close;
-            }
-            return keep_alive_if(&client_request_header);
-        }
-    };
-
-    #[cfg(feature = "https")]
-    if https {
-        let dns = match host.split_once(':') {
-            None => {
-                return Close;
-            }
-            Some((s, _)) => String::from(s),
-        };
-        let domain = match ServerName::try_from(dns) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("{PKG_NAME} couldn't get domain name from '{host}': {e}");
-                return Close;
-            }
-        };
-
-        let mut fetch_stream = match certificates
-            .client_config
-            .connect(domain, fetch_stream)
-            .await
-        {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{PKG_NAME} couldn't establish HTTPS connection to {host}: {e}");
-                return Close;
-            }
-        };
-
-        let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
-        loop {
-            match fetch(
-                &cache_file_path,
-                &client_request_header,
-                &host,
-                &mut fetch_buf_reader,
-                &mut stream,
-                true,
-            )
-            .await
-            {
-                Redirect(uri) => host = uri,
-                x => return x,
-            }
-        }
-    }
-
-    let mut fetch_buf_reader = BufReader::new(&mut fetch_stream);
-    fetch(
-        &cache_file_path,
-        &client_request_header,
-        &host,
-        &mut fetch_buf_reader,
-        &mut stream,
-        #[cfg(feature = "https")]
-        false,
-    )
-    .await
 }

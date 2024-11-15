@@ -271,7 +271,7 @@ pub(crate) enum FetchRequestError {
 }
 
 impl FetchRequest<'_> {
-    async fn from_uri(
+    pub(crate) fn from_uri(
         value: &Uri<'_>,
         #[cfg(feature = "https")] certificates: crate::cert::CertificateSetup,
     ) -> Result<Self, FetchRequestError> {
@@ -309,7 +309,7 @@ impl FetchRequest<'_> {
 
         match (value.scheme, value.host, value.port, value.path) {
             (Some(_), Some(_), Some(_), Some(_)) => (),
-            _ => return Err(InvalidUri)
+            _ => return Err(InvalidUri),
         }
 
         #[cfg(feature = "https")]
