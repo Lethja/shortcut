@@ -1,7 +1,11 @@
-use std::{borrow::{
-    Cow,
-    Cow::{Borrowed, Owned},
-}, fmt, pin::Pin};
+use std::{
+    borrow::{
+        Cow,
+        Cow::{Borrowed, Owned},
+    },
+    fmt,
+    pin::Pin,
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -12,7 +16,7 @@ use crate::conn::{FetchRequestError::*, StreamType::*};
 #[cfg(feature = "https")]
 use {
     std::convert::TryFrom,
-    tokio_rustls::{client, server},
+    tokio_rustls::{client},
 };
 
 #[allow(dead_code)]
@@ -31,7 +35,9 @@ pub(crate) struct Uri<'a> {
 pub(crate) enum UriKind {
     AbsoluteAddress,
     AbsolutePath,
+    Host,
     RelativeAddress,
+    ResolvedAddress,
     Invalid,
 }
 
@@ -44,6 +50,12 @@ impl<'a> From<String> for Uri<'a> {
 impl<'a> From<&String> for Uri<'a> {
     fn from(uri: &String) -> Self {
         Uri::new(uri.clone())
+    }
+}
+
+impl<'a> From<&Uri<'_>> for Uri<'a> {
+    fn from(uri: &Uri) -> Self {
+        Uri::new(uri.uri.clone())
     }
 }
 
@@ -67,22 +79,20 @@ impl<'a> Uri<'a> {
     }
 
     pub(crate) fn kind(&self) -> UriKind {
-        if (self.scheme.is_some() || self.port.is_some())
-            && self.host.is_some()
-            && self.path.is_some()
-        {
-            return UriKind::AbsoluteAddress;
+        match (self.scheme, self.host, self.port, self.path) {
+            (Some(_), Some(_), Some(_), Some(_)) => UriKind::ResolvedAddress,
+            (_, Some(_), Some(_), Some(_)) => UriKind::AbsoluteAddress,
+            (_, Some(_), Some(_), _) => UriKind::Host,
+            (_, Some(_), _, Some(_)) => UriKind::RelativeAddress,
+            (_, _, _, Some(path)) => {
+                if path.starts_with('/') {
+                    UriKind::AbsolutePath
+                } else {
+                    UriKind::Invalid
+                }
+            }
+            _ => UriKind::Invalid,
         }
-
-        if self.host.is_some() && self.path.is_some() {
-            return UriKind::RelativeAddress;
-        }
-
-        if self.path.is_some_and(|p| p.starts_with('/')) {
-            return UriKind::AbsolutePath;
-        }
-
-        UriKind::Invalid
     }
 
     pub(crate) fn merge_with(&self, other: &Uri) -> Uri<'a> {
@@ -245,13 +255,13 @@ enum StreamType {
     Unencrypted(TcpStream),
     #[cfg(feature = "https")]
     TlsClient(client::TlsStream<TcpStream>),
-    #[cfg(feature = "https")]
-    TlsServer(server::TlsStream<TcpStream>),
+    //#[cfg(feature = "https")]
+    //TlsServer(server::TlsStream<TcpStream>),
 }
 
 pub(crate) struct FetchRequest<'a> {
     uri: Uri<'a>,
-    redirect: Option<Uri<'a>>,
+    current_uri: Option<Uri<'a>>,
     stream: StreamType,
 }
 
@@ -280,7 +290,6 @@ impl fmt::Display for FetchRequestError {
     }
 }
 
-#[allow(dead_code)]
 impl FetchRequest<'_> {
     pub(crate) fn from_uri(value: &Uri<'_>) -> Result<Self, FetchRequestError> {
         let redirect = None;
@@ -289,11 +298,12 @@ impl FetchRequest<'_> {
         let uri = Uri::from(&value.uri);
         Ok(FetchRequest {
             uri,
-            redirect,
+            current_uri: redirect,
             stream,
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_string(value: &String) -> Result<Self, FetchRequestError> {
         let redirect = None;
         let stream = Disconnected;
@@ -301,13 +311,14 @@ impl FetchRequest<'_> {
         let uri = Uri::from(value);
         Ok(FetchRequest {
             uri,
-            redirect,
+            current_uri: redirect,
             stream,
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn uri(&self) -> Cow<Uri> {
-        match &self.redirect {
+        match &self.current_uri {
             None => Borrowed(&self.uri),
             Some(s) => {
                 if s.host.is_some() && s.port.is_some() {
@@ -323,69 +334,68 @@ impl FetchRequest<'_> {
         &mut self,
         #[cfg(feature = "https")] certificates: &crate::cert::CertificateSetup,
     ) -> Result<(), FetchRequestError> {
-        let value = match &self.redirect {
+        let value = match &self.current_uri {
             None => &self.uri,
             Some(s) => s,
         };
 
-        match (value.scheme, value.host, value.port, value.path) {
-            (Some(_), Some(_), Some(_), Some(_)) => (),
-            _ => return Err(InvalidUri),
-        }
-
-        #[cfg(feature = "https")]
-        if value.scheme.is_some_and(|s| s == "https://") {
-            let dns = match value.host {
-                None => return Err(HostNotFound),
-                Some(o) => o.to_string(),
-            };
-
-            use tokio_rustls::rustls::pki_types::ServerName;
-            let domain = match ServerName::try_from(dns) {
-                Ok(d) => d,
-                Err(e) => return Err(InvalidDomainName(e.to_string())),
-            };
-
-            let stream = match TcpStream::connect(value.host_and_port().unwrap().to_string()).await
-            {
-                Ok(o) => o,
-                Err(e) => return Err(TcpConnectionError(e.to_string())),
-            };
-
-            let stream: StreamType = match certificates.client_config.connect(domain, stream).await
-            {
-                Ok(s) => TlsClient(s),
-                Err(e) => return Err(TlsConnectionError(e.to_string())),
-            };
-
-            self.stream = stream;
-            return Ok(());
-        }
+        let host = match value.host_and_port() {
+            Some(s) => s,
+            None => return Err(InvalidUri),
+        };
 
         let scheme = match value.scheme {
             None => return Err(InvalidScheme),
             Some(s) => s,
         };
 
-        if scheme == "http://" {
-            let stream = match TcpStream::connect(value.host_and_port().unwrap().to_string()).await
-            {
-                Ok(o) => Unencrypted(o),
-                Err(e) => return Err(TcpConnectionError(e.to_string())),
-            };
+        match scheme {
+            "http://" => {
+                let stream = match TcpStream::connect(host).await {
+                    Ok(o) => Unencrypted(o),
+                    Err(e) => return Err(TcpConnectionError(e.to_string())),
+                };
 
-            self.stream = stream;
-            return Ok(());
+                self.stream = stream;
+                Ok(())
+            }
+            #[cfg(feature = "https")]
+            "https://" => {
+                let dns = match value.host {
+                    None => return Err(InvalidUri),
+                    Some(o) => o.to_string(),
+                };
+
+                use tokio_rustls::rustls::pki_types::ServerName;
+                let domain = match ServerName::try_from(dns) {
+                    Ok(d) => d,
+                    Err(e) => return Err(InvalidDomainName(e.to_string())),
+                };
+
+                let stream = match TcpStream::connect(host).await {
+                    Ok(o) => o,
+                    Err(e) => return Err(TcpConnectionError(e.to_string())),
+                };
+
+                let stream: StreamType =
+                    match certificates.client_config.connect(domain, stream).await {
+                        Ok(s) => TlsClient(s),
+                        Err(e) => return Err(TlsConnectionError(e.to_string())),
+                    };
+
+                self.stream = stream;
+                Ok(())
+            }
+            _ => Err(InvalidScheme),
         }
-
-        Err(InvalidScheme)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn redirect_to(
         &mut self,
         other: &Uri,
     ) -> Option<Pin<Box<dyn AsyncReadWriteExt + '_>>> {
-        let compare = match &self.redirect {
+        let compare = match &self.current_uri {
             None => &self.uri,
             Some(s) => s,
         };
@@ -395,11 +405,11 @@ impl FetchRequest<'_> {
                 if let Some(new_path) = other.path_and_query {
                     let new = format!(
                         "{}{}{}",
-                        compare.host.unwrap_or_default(),
+                        compare.scheme.unwrap_or_default(),
                         compare.host_and_port().unwrap(),
                         new_path
                     );
-                    self.redirect = Some(Uri::from(new));
+                    self.current_uri = Some(Uri::from(new));
                     return self.as_stream();
                 }
                 None
@@ -417,8 +427,8 @@ impl FetchRequest<'_> {
             Unencrypted(ref mut stream) => Some(Box::pin(stream)),
             #[cfg(feature = "https")]
             TlsClient(ref mut stream) => Some(Box::pin(stream)),
-            #[cfg(feature = "https")]
-            TlsServer(ref mut stream) => Some(Box::pin(stream)),
+            //#[cfg(feature = "https")]
+            //TlsServer(ref mut stream) => Some(Box::pin(stream)),
         }
     }
 }
