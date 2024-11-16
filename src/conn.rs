@@ -1,10 +1,7 @@
-use std::{
-    borrow::{
-        Cow,
-        Cow::{Borrowed, Owned},
-    },
-    pin::Pin,
-};
+use std::{borrow::{
+    Cow,
+    Cow::{Borrowed, Owned},
+}, fmt, pin::Pin};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -260,14 +257,30 @@ pub(crate) struct FetchRequest<'a> {
 
 #[derive(Debug)]
 pub(crate) enum FetchRequestError {
-    HostNotFound,
     InvalidScheme,
     InvalidUri,
+    #[cfg(feature = "https")]
     InvalidDomainName(String),
     TcpConnectionError(String),
+    #[cfg(feature = "https")]
     TlsConnectionError(String),
 }
 
+impl fmt::Display for FetchRequestError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            InvalidScheme => write!(f, "Uri had no scheme"),
+            InvalidUri => write!(f, "Invalid Uri"),
+            #[cfg(feature = "https")]
+            InvalidDomainName(name) => write!(f, "Invalid domain name: {}", name),
+            TcpConnectionError(msg) => write!(f, "TCP connection error: {}", msg),
+            #[cfg(feature = "https")]
+            TlsConnectionError(msg) => write!(f, "TLS connection error: {}", msg),
+        }
+    }
+}
+
+#[allow(dead_code)]
 impl FetchRequest<'_> {
     pub(crate) fn from_uri(value: &Uri<'_>) -> Result<Self, FetchRequestError> {
         let redirect = None;

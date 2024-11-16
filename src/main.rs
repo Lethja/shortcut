@@ -20,7 +20,6 @@ use crate::{
     },
 };
 
-use crate::conn::{AsyncReadWriteExt, FetchRequest, FetchRequestError, UriKind};
 #[cfg(feature = "https")]
 use crate::http::ConnectionReturn::Redirect;
 #[cfg(feature = "https")]
@@ -29,7 +28,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     fs::{create_dir_all, remove_file, File},
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, SeekFrom},
-    net::{TcpListener, TcpStream},
+    net::{TcpListener},
     sync::Semaphore,
     time::timeout,
 };
@@ -129,7 +128,7 @@ async fn listen_for(
     tokio::spawn(async move {
         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
 
-        let mut fetch_request: Option<FetchRequest> = None;
+        let mut fetch_request: Option<crate::conn::FetchRequest> = None;
 
         #[cfg(feature = "https")]
         loop {
@@ -152,7 +151,7 @@ async fn listen_for(
 async fn listen_for_https(
     stream: &mut TcpStream,
     certificates: &Arc<CertificateSetup>,
-    mut fetch_request: &mut Option<FetchRequest>,
+    mut fetch_request: &mut Option<conn::FetchRequest>,
 ) -> ConnectionReturn {
     let acceptor = certificates.server_config.clone();
 
@@ -172,7 +171,7 @@ async fn listen_for_https(
 async fn handle_connection<T>(
     mut stream: T,
     #[cfg(feature = "https")] cert: &CertificateSetup,
-    mut fetch_request: &mut Option<FetchRequest<'_>>,
+    _fetch_request: &mut Option<conn::FetchRequest<'_>>,
 ) -> ConnectionReturn
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -194,7 +193,7 @@ where
 
     match client_request_header.method {
         HttpRequestMethod::Get => match client_request_header.request.kind() {
-            UriKind::AbsolutePath => {
+            conn::UriKind::AbsolutePath => {
                 match client_request_header.request.query {
                     #[cfg(feature = "https")]
                     Some(q) => {
@@ -215,7 +214,7 @@ where
                         }
                     }
                     #[cfg(feature = "https")]
-                    _ => match fetch_request {
+                    _ => match _fetch_request {
                         None => {
                             let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
                             if stream.write_all(response.as_bytes()).await.is_err() {
@@ -304,8 +303,8 @@ where
             if stream.write_all(response.as_bytes()).await.is_err() {
                 return Close;
             }
-            match FetchRequest::from_string(&client_request_header.request.uri) {
-                Ok(o) => fetch_request = &mut Some(o),
+            match conn::FetchRequest::from_string(&client_request_header.request.uri) {
+                Ok(o) => _fetch_request = &mut Some(o),
                 Err(_) => {}
             }
             Upgrade(client_request_header.request.uri.to_string())
@@ -435,7 +434,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let uri = Uri::from(&host);
-    let mut fetch_request = match FetchRequest::from_uri(&uri) {
+    let mut fetch_request = match conn::FetchRequest::from_uri(&uri) {
         Ok(r) => r,
         Err(e) => {
             let response = match e {
@@ -459,6 +458,7 @@ where
         )
         .await
     {
+        eprintln!("Fetch connect error: {}", e);
         let response = match e {
             _ => HttpResponseStatus::BAD_REQUEST,
         };
@@ -500,7 +500,7 @@ where
     async fn fetch<R, S>(
         cache_file_path: &PathBuf,
         client_request_header: &HttpRequestHeader<'_>,
-        mut fetch_stream: &mut R,
+        fetch_stream: &mut R,
         mut stream: &mut S,
     ) -> ConnectionReturn
     where
