@@ -24,10 +24,7 @@ use crate::conn::{AsyncReadWriteExt, FetchRequest, FetchRequestError, UriKind};
 #[cfg(feature = "https")]
 use crate::http::ConnectionReturn::Redirect;
 #[cfg(feature = "https")]
-use rustls::pki_types::ServerName;
-#[cfg(feature = "https")]
 use std::convert::TryFrom;
-use std::pin::Pin;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     fs::{create_dir_all, remove_file, File},
@@ -132,11 +129,13 @@ async fn listen_for(
     tokio::spawn(async move {
         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
 
+        let mut fetch_request: Option<FetchRequest> = None;
+
         #[cfg(feature = "https")]
         loop {
-            match handle_connection(&mut stream, &certificates, None).await {
+            match handle_connection(&mut stream, &certificates, &mut fetch_request).await {
                 Keep => continue,
-                Upgrade(s) => match listen_for_https(&mut stream, &certificates, s).await {
+                Upgrade(s) => match listen_for_https(&mut stream, &certificates, &mut fetch_request).await {
                     Keep => continue,
                     _ => return,
                 },
@@ -145,7 +144,7 @@ async fn listen_for(
         }
 
         #[cfg(not(feature = "https"))]
-        while let Keep = handle_connection(&mut stream).await {}
+        while let Keep = handle_connection(&mut stream, &mut fetch_request).await {}
     });
 }
 
@@ -153,7 +152,7 @@ async fn listen_for(
 async fn listen_for_https(
     stream: &mut TcpStream,
     certificates: &Arc<CertificateSetup>,
-    host: String,
+    mut fetch_request: &mut Option<FetchRequest>,
 ) -> ConnectionReturn {
     let acceptor = certificates.server_config.clone();
 
@@ -165,7 +164,7 @@ async fn listen_for_https(
         }
     };
 
-    while let Keep = handle_connection(&mut stream, certificates, Some(&host)).await {}
+    while let Keep = handle_connection(&mut stream, certificates, &mut fetch_request).await {}
 
     Close
 }
@@ -173,7 +172,7 @@ async fn listen_for_https(
 async fn handle_connection<T>(
     mut stream: T,
     #[cfg(feature = "https")] cert: &CertificateSetup,
-    #[cfg(feature = "https")] host: Option<&String>,
+    mut fetch_request: &mut Option<FetchRequest<'_>>,
 ) -> ConnectionReturn
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -216,7 +215,7 @@ where
                         }
                     }
                     #[cfg(feature = "https")]
-                    _ => match host {
+                    _ => match fetch_request {
                         None => {
                             let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
                             if stream.write_all(response.as_bytes()).await.is_err() {
@@ -244,7 +243,6 @@ where
                                     String::from(host),
                                     client_request_header,
                                     cert,
-                                    true,
                                 )
                                 .await;
                             };
@@ -287,7 +285,6 @@ where
                         host,
                         client_request_header,
                         cert,
-                        false,
                     )
                     .await;
                     #[cfg(not(feature = "https"))]
@@ -306,6 +303,10 @@ where
             let response = HttpResponseStatus::OK.to_empty_response();
             if stream.write_all(response.as_bytes()).await.is_err() {
                 return Close;
+            }
+            match FetchRequest::from_string(&client_request_header.request.uri) {
+                Ok(o) => fetch_request = &mut Some(o),
+                Err(_) => {}
             }
             Upgrade(client_request_header.request.uri.to_string())
         }
@@ -426,21 +427,15 @@ where
 async fn fetch_and_serve_file<T>(
     cache_file_path: PathBuf,
     mut stream: T,
-    #[cfg(not(feature = "https"))] host: String,
-    #[cfg(feature = "https")] mut host: String,
+    host: String,
     client_request_header: HttpRequestHeader<'_>,
     #[cfg(feature = "https")] certificates: &CertificateSetup,
-    #[cfg(feature = "https")] https: bool,
 ) -> ConnectionReturn
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let uri = Uri::from(&host);
-    let mut fetch_request = match FetchRequest::from_uri(
-        &uri,
-        #[cfg(feature = "https")]
-        *certificates,
-    ) {
+    let mut fetch_request = match FetchRequest::from_uri(&uri) {
         Ok(r) => r,
         Err(e) => {
             let response = match e {
@@ -457,7 +452,13 @@ where
         }
     };
 
-    if let Err(e) = fetch_request.connect().await {
+    if let Err(e) = fetch_request
+        .connect(
+            #[cfg(feature = "https")]
+            certificates,
+        )
+        .await
+    {
         let response = match e {
             _ => HttpResponseStatus::BAD_REQUEST,
         };
@@ -471,7 +472,7 @@ where
         return keep_alive_if(&client_request_header);
     }
 
-    let fetch_stream = match fetch_request.as_stream() {
+    let mut fetch_stream = match fetch_request.as_stream() {
         None => {
             if stream
                 .write_all(
@@ -489,26 +490,18 @@ where
         Some(f) => f,
     };
 
-    //TODO: Refactor fetch parameters
-    let mut fetch_buf_reader = BufReader::new(fetch_stream);
-
     return fetch(
         &cache_file_path,
         &client_request_header,
-        &host,
-        &mut fetch_buf_reader,
+        &mut fetch_stream,
         &mut stream,
-        #[cfg(feature = "https")]
-        true,
-    );
+    ).await;
 
     async fn fetch<R, S>(
         cache_file_path: &PathBuf,
         client_request_header: &HttpRequestHeader<'_>,
-        host: &String,
-        fetch_buf_reader: &mut BufReader<&mut R>,
+        mut fetch_stream: &mut R,
         mut stream: &mut S,
-        #[cfg(feature = "https")] https: bool,
     ) -> ConnectionReturn
     where
         R: AsyncRead + AsyncWrite + Unpin,
@@ -547,8 +540,10 @@ where
             Some(s) => s,
         };
 
+        let mut fetch_buf_reader = BufReader::new(fetch_stream);
+
         match fetch_buf_reader
-            .write_all(fetch_request_data.as_bytes())
+            .write(fetch_request_data.as_bytes())
             .await
         {
             Ok(_) => {}
@@ -562,9 +557,9 @@ where
         }
 
         let mut fetch_response_header =
-            match HttpResponseHeader::from_tcp_buffer_async(fetch_buf_reader).await {
+            match HttpResponseHeader::from_tcp_buffer_async(&mut fetch_buf_reader).await {
                 None => {
-                    eprintln!("Error: unable to extract header from '{host}'");
+                    eprintln!("Error: unable to extract header");
                     let response = HttpResponseStatus::BAD_GATEWAY.to_response();
                     if stream.write_all(response.as_bytes()).await.is_err() {
                         return Close;
@@ -623,7 +618,7 @@ where
                         (write_stream, write_file) = fetch_and_serve_chunk(
                             cache_file_path,
                             &mut stream,
-                            fetch_buf_reader,
+                            &mut fetch_buf_reader,
                             &mut file,
                         )
                         .await
@@ -659,7 +654,7 @@ where
                         cache_file_path,
                         &mut stream,
                         content_length,
-                        &mut *fetch_buf_reader,
+                        &mut fetch_buf_reader,
                         &mut file,
                     )
                     .await;
@@ -693,23 +688,17 @@ where
             }
             #[cfg(feature = "https")]
             302 => {
-                if https {
-                    let url = match fetch_response_header.headers.get("Location") {
-                        None => {
-                            let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                            if stream.write_all(response.as_bytes()).await.is_err() {
-                                return Close;
-                            }
-                            return keep_alive_if(client_request_header);
+                let url = match fetch_response_header.headers.get("Location") {
+                    None => {
+                        let response = HttpResponseStatus::BAD_REQUEST.to_response();
+                        if stream.write_all(response.as_bytes()).await.is_err() {
+                            return Close;
                         }
-                        Some(s) => s,
-                    };
-                    Redirect(String::from(url))
-                } else {
-                    let pass_through = fetch_response_header.generate();
-                    let _ = stream.write_all(pass_through.as_bytes()).await;
-                    keep_alive_if(client_request_header)
-                }
+                        return keep_alive_if(client_request_header);
+                    }
+                    Some(s) => s,
+                };
+                Redirect(String::from(url))
             }
             _ => {
                 let pass_through = fetch_response_header.generate();

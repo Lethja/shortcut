@@ -240,8 +240,8 @@ impl<'a> Uri<'a> {
     }
 }
 
-pub(crate) trait AsyncReadWriteExt: AsyncRead + AsyncWrite + Unpin {}
-impl<T: AsyncRead + AsyncWrite + Unpin> AsyncReadWriteExt for T {}
+pub(crate) trait AsyncReadWriteExt: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> AsyncReadWriteExt for T {}
 
 enum StreamType {
     Disconnected,
@@ -256,8 +256,6 @@ pub(crate) struct FetchRequest<'a> {
     uri: Uri<'a>,
     redirect: Option<Uri<'a>>,
     stream: StreamType,
-    #[cfg(feature = "https")]
-    certificates: crate::CertificateSetup,
 }
 
 #[derive(Debug)]
@@ -271,10 +269,7 @@ pub(crate) enum FetchRequestError {
 }
 
 impl FetchRequest<'_> {
-    pub(crate) fn from_uri(
-        value: &Uri<'_>,
-        #[cfg(feature = "https")] certificates: crate::cert::CertificateSetup,
-    ) -> Result<Self, FetchRequestError> {
+    pub(crate) fn from_uri(value: &Uri<'_>) -> Result<Self, FetchRequestError> {
         let redirect = None;
         let stream = Disconnected;
 
@@ -283,8 +278,18 @@ impl FetchRequest<'_> {
             uri,
             redirect,
             stream,
-            #[cfg(feature = "https")]
-            certificates,
+        })
+    }
+
+    pub(crate) fn from_string(value: &String) -> Result<Self, FetchRequestError> {
+        let redirect = None;
+        let stream = Disconnected;
+
+        let uri = Uri::from(value);
+        Ok(FetchRequest {
+            uri,
+            redirect,
+            stream,
         })
     }
 
@@ -301,7 +306,10 @@ impl FetchRequest<'_> {
         }
     }
 
-    pub(crate) async fn connect(&mut self) -> Result<(), FetchRequestError> {
+    pub(crate) async fn connect(
+        &mut self,
+        #[cfg(feature = "https")] certificates: &crate::cert::CertificateSetup,
+    ) -> Result<(), FetchRequestError> {
         let value = match &self.redirect {
             None => &self.uri,
             Some(s) => s,
@@ -331,11 +339,7 @@ impl FetchRequest<'_> {
                 Err(e) => return Err(TcpConnectionError(e.to_string())),
             };
 
-            let stream: StreamType = match self
-                .certificates
-                .client_config
-                .connect(domain, stream)
-                .await
+            let stream: StreamType = match certificates.client_config.connect(domain, stream).await
             {
                 Ok(s) => TlsClient(s),
                 Err(e) => return Err(TlsConnectionError(e.to_string())),
