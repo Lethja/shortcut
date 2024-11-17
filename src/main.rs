@@ -33,6 +33,7 @@ use tokio::{
     sync::Semaphore,
     time::timeout,
 };
+use crate::conn::{FetchRequest};
 
 pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -136,13 +137,19 @@ async fn listen_for(
         loop {
             match handle_connection(&mut stream, &certificates, &mut fetch_request).await {
                 Keep => continue,
-                Upgrade(_) => {
+                Upgrade(mut s) => {
+                    s.insert_str(0, "https://");
+                    let new_uri = Uri::from(s);
+                    match fetch_request.take().unwrap().redirect(&new_uri, &certificates).await {
+                        Ok(_) => {}
+                        Err(_) => {return Close}
+                    }
                     match listen_for_https(&mut stream, &certificates, &mut fetch_request).await {
                         Keep => continue,
-                        _ => return,
+                        x => return x,
                     }
                 }
-                _ => return,
+                x => return x,
             }
         }
 
@@ -175,7 +182,7 @@ async fn listen_for_https(
 async fn handle_connection<T>(
     mut stream: T,
     #[cfg(feature = "https")] cert: &CertificateSetup,
-    #[cfg(feature = "https")] mut fetch_request: &mut Option<conn::FetchRequest<'_>>,
+    #[cfg(feature = "https")] fetch_request: &Option<FetchRequest<'_>>,
 ) -> ConnectionReturn
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -285,15 +292,17 @@ where
         },
         #[cfg(feature = "https")]
         HttpRequestMethod::Connect => {
-            let response = HttpResponseStatus::OK.to_empty_response();
-            if stream.write_all(response.as_bytes()).await.is_err() {
-                return Close;
+            match (
+                client_request_header.request.host,
+                client_request_header.request.port,
+            ) {
+                (Some(_), Some(_)) => Upgrade(client_request_header.request.uri),
+                _ => {
+                    let response = HttpResponseStatus::BAD_REQUEST.to_empty_response();
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    Close
+                }
             }
-            match conn::FetchRequest::from_string(&client_request_header.request.uri) {
-                Ok(o) => fetch_request = &mut Some(o),
-                Err(_) => {}
-            }
-            Upgrade(client_request_header.request.uri.to_string())
         }
         _ => {
             let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
@@ -475,15 +484,31 @@ where
         Some(f) => f,
     };
 
-    return fetch(
-        &cache_file_path,
-        &client_request_header,
-        &mut fetch_stream,
-        &mut stream,
-    )
-    .await;
+    let mut uri = Uri::from(&client_request_header.request);
+
+    loop {
+        match fetch(
+            &uri,
+            &cache_file_path,
+            &client_request_header,
+            &mut fetch_stream,
+            &mut stream,
+        )
+        .await
+        {
+            Close => return Close,
+            Keep => return Keep,
+            Redirect(s) => {
+                let new_uri = Uri::from(s);
+                uri = uri.merge_with(&new_uri);
+            }
+            #[cfg(feature = "https")]
+            Upgrade(_) => {}
+        }
+    }
 
     async fn fetch<R, S>(
+        uri: &Uri<'_>,
         cache_file_path: &PathBuf,
         client_request_header: &HttpRequestHeader<'_>,
         fetch_stream: &mut R,
@@ -493,7 +518,7 @@ where
         R: AsyncRead + AsyncWrite + Unpin,
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        let path_and_query = match client_request_header.request.path_and_query {
+        let path_and_query = match uri.path_and_query {
             None => {
                 let response = HttpResponseStatus::BAD_REQUEST.to_response();
                 if stream.write_all(response.as_bytes()).await.is_err() {
@@ -644,7 +669,7 @@ where
                     };
 
                     (write_stream, write_file) = fetch_and_serve_known_length(
-                        cache_file_path,
+                        &cache_file_path,
                         &mut stream,
                         content_length,
                         &mut fetch_buf_reader,
@@ -679,7 +704,6 @@ where
                 }
                 keep_alive_if(client_request_header)
             }
-            #[cfg(feature = "https")]
             302 => {
                 let url = match fetch_response_header.headers.get("Location") {
                     None => {

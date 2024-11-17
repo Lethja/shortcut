@@ -26,7 +26,6 @@ const WAIT_TIMEOUT_SECONDS: u64 = 10;
 pub(crate) enum ConnectionReturn {
     Close,
     Keep,
-    #[cfg(feature = "https")]
     Redirect(String),
     #[cfg(feature = "https")]
     Upgrade(String),

@@ -1,8 +1,4 @@
 use std::{
-    borrow::{
-        Cow,
-        Cow::{Borrowed, Owned},
-    },
     fmt,
     pin::Pin,
 };
@@ -14,10 +10,7 @@ use tokio::{
 use crate::conn::{FetchRequestError::*, StreamType::*};
 
 #[cfg(feature = "https")]
-use {
-    std::convert::TryFrom,
-    tokio_rustls::{client},
-};
+use {std::convert::TryFrom, tokio_rustls::client};
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -305,29 +298,15 @@ impl FetchRequest<'_> {
 
     #[allow(dead_code)]
     pub(crate) fn from_string(value: &String) -> Result<Self, FetchRequestError> {
-        let redirect = None;
+        let current_uri = None;
         let stream = Disconnected;
 
         let uri = Uri::from(value);
         Ok(FetchRequest {
             uri,
-            current_uri: redirect,
+            current_uri,
             stream,
         })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn uri(&self) -> Cow<Uri> {
-        match &self.current_uri {
-            None => Borrowed(&self.uri),
-            Some(s) => {
-                if s.host.is_some() && s.port.is_some() {
-                    Borrowed(s)
-                } else {
-                    Owned(self.uri.merge_with(s))
-                }
-            }
-        }
     }
 
     pub(crate) async fn connect(
@@ -390,11 +369,11 @@ impl FetchRequest<'_> {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn redirect_to(
+    pub(crate) async fn redirect(
         &mut self,
-        other: &Uri,
-    ) -> Option<Pin<Box<dyn AsyncReadWriteExt + '_>>> {
+        other: &Uri<'_>,
+        #[cfg(feature = "https")] certificates: &crate::cert::CertificateSetup,
+    ) -> Result<(), FetchRequestError> {
         let compare = match &self.current_uri {
             None => &self.uri,
             Some(s) => s,
@@ -410,13 +389,18 @@ impl FetchRequest<'_> {
                         new_path
                     );
                     self.current_uri = Some(Uri::from(new));
-                    return self.as_stream();
+                    return Ok(());
                 }
-                None
+                Err(InvalidUri)
             }
             false => {
-                /* TODO: reestablish connection to other host */
-                None
+                match self.connect(certificates).await {
+                    Ok(o) => o,
+                    Err(e) => return Err(e),
+                }
+
+                self.current_uri = Some(Uri::from(other));
+                Ok(())
             }
         }
     }
