@@ -168,7 +168,7 @@ async fn listen_for(
 async fn listen_for_https(
     stream: &mut TcpStream,
     certificates: &Arc<CertificateSetup>,
-    mut fetch_request: &mut Option<conn::FetchRequest<'_>>,
+    fetch_request: &mut Option<FetchRequest<'_>>,
 ) -> ConnectionReturn {
     let acceptor = certificates.server_config.clone();
 
@@ -180,7 +180,7 @@ async fn listen_for_https(
         }
     };
 
-    while let Keep = handle_connection(&mut stream, certificates, &mut fetch_request).await {}
+    while let Keep = handle_connection(&mut stream, certificates, fetch_request).await {}
 
     Close
 }
@@ -188,7 +188,7 @@ async fn listen_for_https(
 async fn handle_connection<T>(
     mut stream: T,
     #[cfg(feature = "https")] cert: &CertificateSetup,
-    mut fetch_request: &mut Option<FetchRequest<'_>>,
+    fetch_request: &mut Option<FetchRequest<'_>>,
 ) -> ConnectionReturn
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -257,7 +257,7 @@ where
                                     cache_file_path,
                                     stream,
                                     client_request_header,
-                                    &mut fetch_request,
+                                    fetch_request,
                                     cert,
                                 )
                                 .await;
@@ -288,7 +288,7 @@ where
                         cache_file_path,
                         stream,
                         client_request_header,
-                        &mut fetch_request,
+                        fetch_request,
                         cert,
                     )
                     .await;
@@ -447,12 +447,10 @@ where
         Some(u) => u.uri().merge_with(&client_request_header.request),
     };
 
-    let mut fetch_request = match conn::FetchRequest::from_uri(&uri) {
+    let mut fetch_request = match FetchRequest::from_uri(&uri) {
         Ok(r) => r,
-        Err(e) => {
-            let response = match e {
-                _ => HttpResponseStatus::BAD_REQUEST,
-            };
+        Err(_) => {
+            let response = HttpResponseStatus::BAD_REQUEST;
             if stream
                 .write_all(response.to_response().as_bytes())
                 .await
@@ -472,9 +470,7 @@ where
         .await
     {
         eprintln!("Fetch connect error: {}", e);
-        let response = match e {
-            _ => HttpResponseStatus::BAD_REQUEST,
-        };
+        let response = HttpResponseStatus::BAD_REQUEST;
         if stream
             .write_all(response.to_response().as_bytes())
             .await
@@ -575,18 +571,15 @@ where
                 return keep_alive_if(client_request_header);
             }
             Some(s) => {
-                if fetch_stream.write_all(s.as_bytes()).await.is_err() {
-                    if stream
+                if fetch_stream.write_all(s.as_bytes()).await.is_err() && stream
                         .write_all(
                             HttpResponseStatus::INTERNAL_SERVER_ERROR
                                 .to_response()
                                 .as_bytes(),
                         )
                         .await
-                        .is_err()
-                    {
-                        return Close;
-                    }
+                        .is_err() {
+                    return Close;
                 }
             }
         };
@@ -688,7 +681,7 @@ where
                     };
 
                     (write_stream, write_file) = fetch_and_serve_known_length(
-                        &cache_file_path,
+                        cache_file_path,
                         &mut stream,
                         content_length,
                         &mut fetch_buf_reader,
