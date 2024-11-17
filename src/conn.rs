@@ -1,7 +1,4 @@
-use std::{
-    fmt,
-    pin::Pin,
-};
+use std::{fmt, pin::Pin};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -309,6 +306,15 @@ impl FetchRequest<'_> {
         })
     }
 
+    pub(crate) fn uri(&self) -> &Uri {
+        match &self.current_uri {
+            None => &self.uri,
+            Some(s) => {
+                s
+            }
+        }
+    }
+
     pub(crate) async fn connect(
         &mut self,
         #[cfg(feature = "https")] certificates: &crate::cert::CertificateSetup,
@@ -394,7 +400,13 @@ impl FetchRequest<'_> {
                 Err(InvalidUri)
             }
             false => {
-                match self.connect(certificates).await {
+                match self
+                    .connect(
+                        #[cfg(feature = "https")]
+                        certificates,
+                    )
+                    .await
+                {
                     Ok(o) => o,
                     Err(e) => return Err(e),
                 }

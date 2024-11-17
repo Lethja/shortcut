@@ -12,18 +12,15 @@ use crate::{
 use tokio::net::TcpStream;
 
 use crate::{
-    conn::Uri,
+    conn::{Uri, FetchRequest},
     http::{
         fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if,
         ConnectionReturn,
-        ConnectionReturn::{Close, Keep},
+        ConnectionReturn::{Close, Keep, Redirect},
         HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
         BUFFER_SIZE, X_PROXY_CACHE_PATH,
     },
 };
-
-#[cfg(feature = "https")]
-use crate::http::ConnectionReturn::Redirect;
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
@@ -33,7 +30,6 @@ use tokio::{
     sync::Semaphore,
     time::timeout,
 };
-use crate::conn::{FetchRequest};
 
 pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -140,10 +136,20 @@ async fn listen_for(
                 Upgrade(mut s) => {
                     s.insert_str(0, "https://");
                     let new_uri = Uri::from(s);
-                    match fetch_request.take().unwrap().redirect(&new_uri, &certificates).await {
-                        Ok(_) => {}
-                        Err(_) => {return Close}
-                    }
+                    fetch_request = match fetch_request {
+                        Some(mut f) => {
+                            match f.redirect(&new_uri, &certificates).await {
+                                Ok(o) => o,
+                                Err(_) => return Close,
+                            }
+                            Some(f)
+                        }
+                        None => match FetchRequest::from_uri(&new_uri) {
+                            Ok(o) => Some(o),
+                            Err(_) => None,
+                        },
+                    };
+
                     match listen_for_https(&mut stream, &certificates, &mut fetch_request).await {
                         Keep => continue,
                         x => return x,
@@ -182,7 +188,7 @@ async fn listen_for_https(
 async fn handle_connection<T>(
     mut stream: T,
     #[cfg(feature = "https")] cert: &CertificateSetup,
-    #[cfg(feature = "https")] fetch_request: &Option<FetchRequest<'_>>,
+    mut fetch_request: &mut Option<FetchRequest<'_>>,
 ) -> ConnectionReturn
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -251,6 +257,7 @@ where
                                     cache_file_path,
                                     stream,
                                     client_request_header,
+                                    &mut fetch_request,
                                     cert,
                                 )
                                 .await;
@@ -281,6 +288,7 @@ where
                         cache_file_path,
                         stream,
                         client_request_header,
+                        &mut fetch_request,
                         cert,
                     )
                     .await;
@@ -296,7 +304,13 @@ where
                 client_request_header.request.host,
                 client_request_header.request.port,
             ) {
-                (Some(_), Some(_)) => Upgrade(client_request_header.request.uri),
+                (Some(_), Some(_)) => {
+                    let response = HttpResponseStatus::OK.to_empty_response();
+                    if stream.write_all(response.as_bytes()).await.is_err() {
+                        return Close;
+                    }
+                    Upgrade(client_request_header.request.uri)
+                },
                 _ => {
                     let response = HttpResponseStatus::BAD_REQUEST.to_empty_response();
                     let _ = stream.write_all(response.as_bytes()).await;
@@ -422,12 +436,17 @@ async fn fetch_and_serve_file<T>(
     cache_file_path: PathBuf,
     mut stream: T,
     client_request_header: HttpRequestHeader<'_>,
+    #[cfg(feature = "https")] fetch_request: &mut Option<FetchRequest<'_>>,
     #[cfg(feature = "https")] certificates: &CertificateSetup,
 ) -> ConnectionReturn
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let uri = Uri::from(&client_request_header.request);
+    let uri = match fetch_request {
+        None => Uri::from(&client_request_header.request),
+        Some(u) => u.uri().merge_with(&client_request_header.request),
+    };
+
     let mut fetch_request = match conn::FetchRequest::from_uri(&uri) {
         Ok(r) => r,
         Err(e) => {
