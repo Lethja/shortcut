@@ -166,11 +166,7 @@ impl<'a> Uri<'a> {
                         Some(s) => s + start,
                     };
 
-                    let slice = &value[start..end];
-                    if slice.contains('.') {
-                        return Some(slice);
-                    }
-                    None
+                    Some(&value[start..end])
                 }
             }
         }
