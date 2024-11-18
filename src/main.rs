@@ -149,11 +149,7 @@ async fn listen_for(
                             Err(_) => None,
                         },
                     };
-
-                    match listen_for_https(&mut stream, &certificates, &mut fetch_request).await {
-                        Keep => continue,
-                        x => return x,
-                    }
+                    return listen_for_https(&mut stream, &certificates, &mut fetch_request).await;
                 }
                 x => return x,
             }
