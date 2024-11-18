@@ -305,9 +305,7 @@ impl FetchRequest<'_> {
     pub(crate) fn uri(&self) -> &Uri {
         match &self.current_uri {
             None => &self.uri,
-            Some(s) => {
-                s
-            }
+            Some(s) => s,
         }
     }
 

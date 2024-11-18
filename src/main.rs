@@ -12,7 +12,7 @@ use crate::{
 use tokio::net::TcpStream;
 
 use crate::{
-    conn::{Uri, FetchRequest},
+    conn::{FetchRequest, Uri},
     http::{
         fetch_and_serve_chunk, fetch_and_serve_known_length, get_cache_name, keep_alive_if,
         ConnectionReturn,
@@ -22,6 +22,8 @@ use crate::{
     },
 };
 
+use crate::conn::FetchRequestError;
+use std::future::Future;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     fs::{create_dir_all, remove_file, File},
@@ -127,7 +129,7 @@ async fn listen_for(
         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
 
         #[cfg(feature = "https")]
-        let mut fetch_request: Option<conn::FetchRequest> = None;
+        let mut fetch_request: Option<FetchRequest> = None;
 
         #[cfg(feature = "https")]
         loop {
@@ -150,6 +152,28 @@ async fn listen_for(
                         },
                     };
                     return listen_for_https(&mut stream, &certificates, &mut fetch_request).await;
+                }
+
+                Redirect(s) => {
+                    todo!(
+                        This will not work, handle_connection must be split into two functions
+                        1. Handle the clients original request
+                        2. Serve the actual request
+                    );
+                    let new_uri = Uri::from(s);
+                    fetch_request = match fetch_request {
+                        Some(mut f) => {
+                            match f.redirect(&new_uri, &certificates).await {
+                                Ok(o) => o,
+                                Err(_) => return Close,
+                            }
+                            Some(f)
+                        }
+                        None => match FetchRequest::from_uri(&new_uri) {
+                            Ok(o) => Some(o),
+                            Err(_) => None,
+                        },
+                    };
                 }
                 x => return x,
             }
@@ -306,7 +330,7 @@ where
                         return Close;
                     }
                     Upgrade(client_request_header.request.uri)
-                },
+                }
                 _ => {
                     let response = HttpResponseStatus::BAD_REQUEST.to_empty_response();
                     let _ = stream.write_all(response.as_bytes()).await;
@@ -510,11 +534,10 @@ where
             Close => return Close,
             Keep => return Keep,
             Redirect(s) => {
-                let new_uri = Uri::from(s);
-                uri = uri.merge_with(&new_uri);
+                return Redirect(s);
             }
             #[cfg(feature = "https")]
-            Upgrade(_) => {}
+            Upgrade(_) => return Close,
         }
     }
 
@@ -567,14 +590,16 @@ where
                 return keep_alive_if(client_request_header);
             }
             Some(s) => {
-                if fetch_stream.write_all(s.as_bytes()).await.is_err() && stream
+                if fetch_stream.write_all(s.as_bytes()).await.is_err()
+                    && stream
                         .write_all(
                             HttpResponseStatus::INTERNAL_SERVER_ERROR
                                 .to_response()
                                 .as_bytes(),
                         )
                         .await
-                        .is_err() {
+                        .is_err()
+                {
                     return Close;
                 }
             }
