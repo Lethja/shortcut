@@ -23,6 +23,7 @@ pub const X_PROXY_CACHE_PATH: &str = "X_PROXY_CACHE_PATH";
 pub const BUFFER_SIZE: usize = 16384;
 const WAIT_TIMEOUT_SECONDS: u64 = 10;
 
+#[cfg_attr(debug_assertions, derive(Debug))]
 pub(crate) enum ConnectionReturn {
     Close,
     Keep,

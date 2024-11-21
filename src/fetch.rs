@@ -1,34 +1,90 @@
-use crate::{
-    conn::{FetchRequest, Uri},
-    http::ConnectionReturn::{Close, Redirect},
-    http::{
-        fetch_and_serve_chunk, fetch_and_serve_known_length, keep_alive_if, ConnectionReturn,
-        HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
+use {
+    crate::{
+        conn::{FetchRequest, Uri},
+        http::{
+            fetch_and_serve_chunk, fetch_and_serve_known_length, keep_alive_if, ConnectionReturn,
+            ConnectionReturn::{Close, Redirect},
+            HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus,
+            HttpVersion,
+        },
     },
-};
-use std::{path::PathBuf, time::Duration};
-use tokio::{
-    fs::{create_dir_all, remove_file, File},
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
-    time::timeout,
+    std::{path::PathBuf, time::Duration},
+    tokio::{
+        fs::{create_dir_all, remove_file, File},
+        io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
+        time::timeout,
+    },
 };
 
 #[cfg(feature = "https")]
 use crate::cert::CertificateSetup;
-#[cfg(feature = "https")]
-use ConnectionReturn::Upgrade;
 
-async fn fetch_and_serve_file<T>(
+pub(crate) async fn fetch_and_serve_file<T>(
     cache_file_path: PathBuf,
     mut stream: T,
     client_request_header: HttpRequestHeader<'_>,
-    #[cfg(feature = "https")] fetch_request: &mut Option<FetchRequest<'_>>,
     #[cfg(feature = "https")] certificates: &CertificateSetup,
 ) -> ConnectionReturn
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    todo!("Rewrite fetch and serve to have nothing to do with the clients request");
+    let mut fetch_request: FetchRequest =
+        match FetchRequest::from_uri(&client_request_header.request) {
+            Ok(o) => o,
+            Err(_) => return Close,
+        };
+
+    match fetch_request
+        .connect(
+            #[cfg(feature = "https")]
+            certificates,
+        )
+        .await
+    {
+        Ok(_) => (),
+        Err(_) => return Close,
+    };
+
+    loop {
+        let uri = Uri::from(fetch_request.uri()); //TODO: remove copy
+
+        let mut fetch_stream = match fetch_request.as_stream() {
+            None => return Close,
+            Some(f) => f,
+        };
+
+        let fetch_result = fetch(
+            &uri,
+            &cache_file_path,
+            &client_request_header,
+            &mut fetch_stream,
+            &mut stream,
+        )
+        .await;
+
+        drop(fetch_stream);
+
+        match fetch_result {
+            Redirect(r) => {
+                let new_url = Uri::from(r);
+
+                match fetch_request
+                    .redirect(
+                        &new_url,
+                        #[cfg(feature = "https")]
+                        certificates,
+                    )
+                    .await
+                {
+                    Ok(o) => o,
+                    Err(_) => return Close,
+                };
+
+                continue;
+            }
+            x => return x,
+        }
+    }
 
     async fn fetch<R, S>(
         uri: &Uri<'_>,

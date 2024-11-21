@@ -15,10 +15,11 @@ use tokio::{
 
 #[cfg(feature = "https")]
 use crate::cert::{CertificateSetup, CERT_QUERY};
+use crate::fetch::fetch_and_serve_file;
 #[cfg(feature = "https")]
 use ConnectionReturn::Upgrade;
 
-pub(crate) async fn handle_http_request<T>(mut stream: T) -> Option<HttpRequestHeader<'static>>
+pub(crate) async fn read_http_request<T>(mut stream: T) -> Option<HttpRequestHeader<'static>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -38,7 +39,7 @@ where
     }
 }
 
-pub(crate) async fn parse_http_request<T>(
+pub(crate) async fn serve_http_request<T>(
     mut stream: T,
     client_request_header: HttpRequestHeader<'_>,
     #[cfg(feature = "https")] cert: &CertificateSetup,
@@ -86,7 +87,14 @@ where
                 if cache_file_path.exists() {
                     serve_existing_file(&cache_file_path, stream, &client_request_header).await
                 } else {
-                    todo!("Fetch logic")
+                    fetch_and_serve_file(
+                        cache_file_path,
+                        stream,
+                        client_request_header,
+                        #[cfg(feature = "https")]
+                        cert,
+                    )
+                    .await
                 }
             }
         },

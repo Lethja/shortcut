@@ -9,6 +9,10 @@ mod serve;
 use {
     crate::{
         cert::{setup_certificates, CertificateSetup},
+        conn::{
+            Uri,
+            UriKind::{AbsoluteAddress, Host},
+        },
         http::ConnectionReturn::Upgrade,
     },
     tokio::net::TcpStream,
@@ -17,15 +21,10 @@ use {
 use {
     crate::{
         http::{ConnectionReturn::Keep, X_PROXY_CACHE_PATH},
-        serve::{handle_http_request, parse_http_request},
+        serve::{read_http_request, serve_http_request},
     },
     std::{path::PathBuf, sync::Arc},
-    tokio::{
-        fs::create_dir_all,
-        io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt},
-        net::TcpListener,
-        sync::Semaphore,
-    },
+    tokio::{fs::create_dir_all, net::TcpListener, sync::Semaphore},
 };
 
 pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -123,12 +122,12 @@ async fn listen_for(
     tokio::spawn(async move {
         let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
 
-        let client_request = match handle_http_request(&mut stream).await {
+        let client_request = match read_http_request(&mut stream).await {
             None => return,
             Some(x) => x,
         };
 
-        match parse_http_request(
+        match serve_http_request(
             &mut stream,
             client_request,
             #[cfg(feature = "https")]
@@ -137,7 +136,7 @@ async fn listen_for(
         .await
         {
             #[cfg(feature = "https")]
-            Upgrade(h) => listen_for_https(&mut stream, &certificates).await,
+            Upgrade(h) => listen_for_https(h, &mut stream, &certificates).await,
             Keep => {}
             _ => return,
         }
@@ -145,7 +144,11 @@ async fn listen_for(
 }
 
 #[cfg(feature = "https")]
-async fn listen_for_https(stream: &mut TcpStream, certificates: &Arc<CertificateSetup>) {
+async fn listen_for_https(
+    mut host: String,
+    stream: &mut TcpStream,
+    certificates: &Arc<CertificateSetup>,
+) {
     let acceptor = certificates.server_config.clone();
 
     let mut stream = match acceptor.accept(stream).await {
@@ -156,5 +159,26 @@ async fn listen_for_https(stream: &mut TcpStream, certificates: &Arc<Certificate
         }
     };
 
-    todo!("Handle HTTPS connection");
+    host.insert_str(0, "https://");
+    let host = Uri::from(host);
+
+    if host.kind() != Host {
+        return;
+    }
+
+    loop {
+        let mut client_request = match read_http_request(&mut stream).await {
+            None => return,
+            Some(x) => x,
+        };
+
+        if client_request.request.kind() != AbsoluteAddress {
+            client_request.request = client_request.request.merge_with(&host);
+        }
+
+        match serve_http_request(&mut stream, client_request, &*certificates).await {
+            Keep => continue,
+            _ => return,
+        }
+    }
 }

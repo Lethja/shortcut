@@ -85,6 +85,7 @@ impl<'a> Uri<'a> {
         }
     }
 
+    #[cfg(feature = "https")]
     pub(crate) fn merge_with(&self, other: &Uri) -> Uri<'a> {
         let scheme = match (self.scheme, other.scheme) {
             (None, Some(s)) => Some(s),
