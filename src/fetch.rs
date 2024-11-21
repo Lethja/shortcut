@@ -165,16 +165,6 @@ where
                 Some(s) => s,
             };
 
-        let fetch_response_header_data = fetch_response_header.generate();
-
-        match stream
-            .write_all(fetch_response_header_data.as_bytes())
-            .await
-        {
-            Ok(_) => {}
-            Err(_) => return Close,
-        }
-
         match fetch_response_header.status.to_code() {
             200 => {
                 let cache_file_parent = match cache_file_path.parent() {
@@ -206,6 +196,11 @@ where
                     }
                     Ok(file) => file,
                 };
+
+                match write_to_client(&mut fetch_response_header, &mut stream).await {
+                    Ok(_) => {}
+                    Err(_) => return Close,
+                }
 
                 let (write_stream, write_file);
 
@@ -301,5 +296,19 @@ where
                 keep_alive_if(client_request_header)
             }
         }
+    }
+
+    async fn write_to_client<T>(
+        fetch_response_header: &mut HttpResponseHeader,
+        stream: &mut T,
+    ) -> std::io::Result<()>
+    where
+        T: AsyncRead + AsyncWrite + Unpin,
+    {
+        let fetch_response_header_data = fetch_response_header.generate();
+
+        stream
+            .write_all(fetch_response_header_data.as_bytes())
+            .await
     }
 }
