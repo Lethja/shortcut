@@ -248,7 +248,6 @@ enum StreamType {
 
 pub(crate) struct FetchRequest<'a> {
     uri: Uri<'a>,
-    current_uri: Option<Uri<'a>>,
     stream: StreamType,
 }
 
@@ -279,45 +278,29 @@ impl fmt::Display for FetchRequestError {
 
 impl FetchRequest<'_> {
     pub(crate) fn from_uri(value: &Uri<'_>) -> Result<Self, FetchRequestError> {
-        let redirect = None;
         let stream = Disconnected;
 
         let uri = Uri::from(&value.uri);
-        Ok(FetchRequest {
-            uri,
-            current_uri: redirect,
-            stream,
-        })
+        Ok(FetchRequest { uri, stream })
     }
 
     #[allow(dead_code)]
     pub(crate) fn from_string(value: &String) -> Result<Self, FetchRequestError> {
-        let current_uri = None;
         let stream = Disconnected;
 
         let uri = Uri::from(value);
-        Ok(FetchRequest {
-            uri,
-            current_uri,
-            stream,
-        })
+        Ok(FetchRequest { uri, stream })
     }
 
     pub(crate) fn uri(&self) -> &Uri {
-        match &self.current_uri {
-            None => &self.uri,
-            Some(s) => s,
-        }
+        &self.uri
     }
 
     pub(crate) async fn connect(
         &mut self,
         #[cfg(feature = "https")] certificates: &crate::cert::CertificateSetup,
     ) -> Result<(), FetchRequestError> {
-        let value = match &self.current_uri {
-            None => &self.uri,
-            Some(s) => s,
-        };
+        let value = &self.uri;
 
         let host = match value.host_and_port() {
             Some(s) => s,
@@ -375,10 +358,7 @@ impl FetchRequest<'_> {
         other: &Uri<'_>,
         #[cfg(feature = "https")] certificates: &crate::cert::CertificateSetup,
     ) -> Result<(), FetchRequestError> {
-        let compare = match &self.current_uri {
-            None => &self.uri,
-            Some(s) => s,
-        };
+        let compare = &self.uri;
 
         match compare.same_host_as(other) {
             true => {
@@ -389,12 +369,13 @@ impl FetchRequest<'_> {
                         compare.host_and_port().unwrap(),
                         new_path
                     );
-                    self.current_uri = Some(Uri::from(new));
+                    self.uri = Uri::from(new);
                     return Ok(());
                 }
                 Err(InvalidUri)
             }
             false => {
+                self.uri = Uri::from(other);
                 match self
                     .connect(
                         #[cfg(feature = "https")]
@@ -406,7 +387,6 @@ impl FetchRequest<'_> {
                     Err(e) => return Err(e),
                 }
 
-                self.current_uri = Some(Uri::from(other));
                 Ok(())
             }
         }

@@ -120,25 +120,30 @@ async fn listen_for(
     let certificates = Arc::clone(certificates);
 
     tokio::spawn(async move {
-        let _permit = semaphore.acquire().await.expect("Semaphore acquire failed");
-
-        let client_request = match read_http_request(&mut stream).await {
-            None => return,
-            Some(x) => x,
+        let _ = match semaphore.acquire().await {
+            Ok(_) => {}
+            Err(_) => return,
         };
 
-        match serve_http_request(
-            &mut stream,
-            client_request,
-            #[cfg(feature = "https")]
-            &*certificates,
-        )
-        .await
-        {
-            #[cfg(feature = "https")]
-            Upgrade(h) => listen_for_https(h, &mut stream, &certificates).await,
-            Keep => {}
-            _ => return,
+        loop {
+            let client_request = match read_http_request(&mut stream).await {
+                None => return,
+                Some(x) => x,
+            };
+
+            match serve_http_request(
+                &mut stream,
+                client_request,
+                #[cfg(feature = "https")]
+                &*certificates,
+            )
+            .await
+            {
+                #[cfg(feature = "https")]
+                Upgrade(h) => listen_for_https(h, &mut stream, &certificates).await,
+                Keep => continue,
+                _ => return,
+            }
         }
     });
 }
