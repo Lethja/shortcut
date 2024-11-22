@@ -23,13 +23,25 @@ pub const X_PROXY_CACHE_PATH: &str = "X_PROXY_CACHE_PATH";
 pub const BUFFER_SIZE: usize = 16384;
 const WAIT_TIMEOUT_SECONDS: u64 = 10;
 
-#[cfg_attr(debug_assertions, derive(Debug))]
 pub(crate) enum ConnectionReturn {
     Close,
     Keep,
     Redirect(String),
     #[cfg(feature = "https")]
     Upgrade(String),
+}
+
+impl PartialEq for ConnectionReturn {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Keep, Keep) => true,
+            (Close, Close) => true,
+            (ConnectionReturn::Redirect(a), ConnectionReturn::Redirect(b)) => a == b,
+            #[cfg(feature = "https")]
+            (ConnectionReturn::Upgrade(a), ConnectionReturn::Upgrade(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 pub(crate) enum HttpRequestMethod {
@@ -461,14 +473,14 @@ impl HttpResponseStatus {
         format!("HTTP/1.1 {code} {str}{END_OF_HTTP_HEADER_LINE}Date: {date}")
     }
 
-    pub(crate) fn to_empty_response(&self) -> String {
+    fn to_empty_response(&self) -> String {
         let code = self.0;
         let str = self.to_description().to_uppercase();
         let date = httpdate::fmt_http_date(SystemTime::now());
         format!("HTTP/1.1 {code} {str}{END_OF_HTTP_HEADER_LINE}Date: {date}{END_OF_HTTP_HEADER}")
     }
 
-    pub(crate) fn to_response(&self) -> String {
+    fn to_response(&self) -> String {
         let code = self.0;
         let msg = self.to_description();
         let len = msg.len();
@@ -842,4 +854,23 @@ where
     }
 
     (false, false)
+}
+
+pub(crate) async fn respond_with<T>(
+    return_type: ConnectionReturn,
+    state: HttpResponseStatus,
+    stream: &mut T,
+) -> ConnectionReturn
+where
+    T: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    let r = match state.0 {
+        100 | 101 | 102 | 103 | 200 | 204 | 205 | 304 => state.to_empty_response(),
+        _ => state.to_response(),
+    };
+
+    match stream.write_all(r.as_bytes()).await {
+        Ok(_) => return_type,
+        Err(_) => Close,
+    }
 }

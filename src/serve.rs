@@ -1,23 +1,26 @@
-use crate::{
-    conn,
-    http::{
-        get_cache_name, keep_alive_if, ConnectionReturn, ConnectionReturn::Close,
-        HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus, HttpVersion,
-        BUFFER_SIZE,
+use {
+    crate::{
+        conn,
+        fetch::fetch_and_serve_file,
+        http::{
+            get_cache_name, keep_alive_if, respond_with, ConnectionReturn, ConnectionReturn::Close,
+            HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus,
+            HttpVersion, BUFFER_SIZE,
+        },
     },
-};
-use std::{collections::HashMap, io::SeekFrom, path::PathBuf, time::Duration};
-use tokio::{
-    fs::File,
-    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader},
-    time::timeout,
+    std::{collections::HashMap, io::SeekFrom, path::PathBuf, time::Duration},
+    tokio::{
+        fs::File,
+        io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader},
+        time::timeout,
+    },
 };
 
 #[cfg(feature = "https")]
-use crate::cert::{CertificateSetup, CERT_QUERY};
-use crate::fetch::fetch_and_serve_file;
-#[cfg(feature = "https")]
-use ConnectionReturn::Upgrade;
+use {
+    crate::cert::{CertificateSetup, CERT_QUERY},
+    ConnectionReturn::Upgrade,
+};
 
 pub(crate) async fn read_http_request<T>(mut stream: T) -> Option<HttpRequestHeader<'static>>
 where
@@ -57,30 +60,46 @@ where
                             if cert.server_cert_path.is_file() {
                                 serve_existing_file(
                                     &cert.server_cert_path,
-                                    stream,
+                                    &mut stream,
                                     &client_request_header,
                                 )
                                 .await;
                             } else {
-                                let response = HttpResponseStatus::NOT_FOUND.to_response();
-                                if stream.write_all(response.as_bytes()).await.is_err() {
-                                    return Close;
-                                }
+                                return respond_with(
+                                    keep_alive_if(&client_request_header),
+                                    HttpResponseStatus::NOT_FOUND,
+                                    &mut stream,
+                                )
+                                .await;
                             }
                         }
                     }
                     _ => {
-                        let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
-                        if stream.write_all(response.as_bytes()).await.is_err() {
-                            return Close;
-                        }
+                        return respond_with(
+                            keep_alive_if(&client_request_header),
+                            HttpResponseStatus::NO_CONTENT,
+                            &mut stream,
+                        )
+                        .await
                     }
                 }
-                keep_alive_if(&client_request_header)
+                respond_with(
+                    keep_alive_if(&client_request_header),
+                    HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                    &mut stream,
+                )
+                .await
             }
             _ => {
                 let cache_file_path = match get_cache_name(&client_request_header).await {
-                    None => return keep_alive_if(&client_request_header),
+                    None => {
+                        return respond_with(
+                            keep_alive_if(&client_request_header),
+                            HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                            &mut stream,
+                        )
+                        .await
+                    }
                     Some(p) => p,
                 };
 
@@ -105,25 +124,30 @@ where
                 client_request_header.request.port,
             ) {
                 (Some(_), Some(_)) => {
-                    let response = HttpResponseStatus::OK.to_empty_response();
-                    if stream.write_all(response.as_bytes()).await.is_err() {
-                        return Close;
-                    }
-                    Upgrade(client_request_header.request.uri)
+                    respond_with(
+                        Upgrade(client_request_header.request.uri),
+                        HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                        &mut stream,
+                    )
+                    .await
                 }
                 _ => {
-                    let response = HttpResponseStatus::BAD_REQUEST.to_empty_response();
-                    let _ = stream.write_all(response.as_bytes()).await;
-                    Close
+                    respond_with(
+                        Close,
+                        HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                        &mut stream,
+                    )
+                    .await
                 }
             }
         }
         _ => {
-            let response = HttpResponseStatus::METHOD_NOT_ALLOWED.to_response();
-            if stream.write_all(response.as_bytes()).await.is_err() {
-                return Close;
-            }
-            keep_alive_if(&client_request_header)
+            respond_with(
+                keep_alive_if(&client_request_header),
+                HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                &mut stream,
+            )
+            .await
         }
     }
 }
@@ -139,32 +163,35 @@ where
     let mut file = match File::open(cache_file_path).await {
         Ok(f) => f,
         Err(_) => {
-            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-            if stream.write_all(response.as_bytes()).await.is_err() {
-                return Close;
-            }
-            return keep_alive_if(client_request_header);
+            return respond_with(
+                keep_alive_if(&client_request_header),
+                HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                &mut stream,
+            )
+            .await
         }
     };
 
     let metadata = match file.metadata().await {
         Ok(m) => m,
         Err(_) => {
-            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-            if stream.write_all(response.as_bytes()).await.is_err() {
-                return Close;
-            }
-            return keep_alive_if(client_request_header);
+            return respond_with(
+                keep_alive_if(&client_request_header),
+                HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                &mut stream,
+            )
+            .await
         }
     };
 
     let length = metadata.len();
     if length == 0 {
-        let response = HttpResponseStatus::NO_CONTENT.to_empty_response();
-        if stream.write_all(response.as_bytes()).await.is_err() {
-            return Close;
-        }
-        return keep_alive_if(client_request_header);
+        return respond_with(
+            keep_alive_if(&client_request_header),
+            HttpResponseStatus::NO_CONTENT,
+            &mut stream,
+        )
+        .await;
     }
 
     let mut start_position: u64 = 0;
@@ -207,11 +234,12 @@ where
     let _ = file.seek(SeekFrom::Start(start_position)).await;
 
     if end_position <= start_position {
-        let response = HttpResponseStatus::BAD_REQUEST.to_response();
-        if stream.write_all(response.as_bytes()).await.is_err() {
-            return Close;
-        }
-        return keep_alive_if(client_request_header);
+        return respond_with(
+            keep_alive_if(&client_request_header),
+            HttpResponseStatus::BAD_REQUEST,
+            &mut stream,
+        )
+        .await;
     }
 
     let mut bytes: u64 = end_position - start_position + 1;
@@ -222,12 +250,12 @@ where
             Ok(0) => break,
             Ok(n) => {
                 if stream.write_all(&buffer[..n]).await.is_err() {
-                    return Close;
+                    return Close; /* Something went wrong mid-transmission */
                 }
                 bytes -= n as u64;
             }
             Err(_) => break,
         }
     }
-    keep_alive_if(client_request_header)
+    keep_alive_if(client_request_header) /* Existing file transfer finished */
 }

@@ -2,7 +2,8 @@ use {
     crate::{
         conn::{FetchRequest, Uri},
         http::{
-            fetch_and_serve_chunk, fetch_and_serve_known_length, keep_alive_if, ConnectionReturn,
+            fetch_and_serve_chunk, fetch_and_serve_known_length, keep_alive_if, respond_with,
+            ConnectionReturn,
             ConnectionReturn::{Close, Redirect},
             HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus,
             HttpVersion,
@@ -31,7 +32,14 @@ where
     let mut fetch_request: FetchRequest =
         match FetchRequest::from_uri(&client_request_header.request) {
             Ok(o) => o,
-            Err(_) => return Close,
+            Err(_) => {
+                return respond_with(
+                    Close,
+                    HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                    &mut stream,
+                )
+                .await
+            }
         };
 
     match fetch_request
@@ -42,14 +50,28 @@ where
         .await
     {
         Ok(_) => (),
-        Err(_) => return Close,
+        Err(_) => {
+            return respond_with(
+                Close,
+                HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                &mut stream,
+            )
+            .await
+        }
     };
 
     loop {
         let uri = Uri::from(fetch_request.uri()); //TODO: remove copy
 
         let mut fetch_stream = match fetch_request.as_stream() {
-            None => return Close,
+            None => {
+                return respond_with(
+                    Close,
+                    HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                    &mut stream,
+                )
+                .await
+            }
             Some(f) => f,
         };
 
@@ -77,7 +99,14 @@ where
                     .await
                 {
                     Ok(o) => o,
-                    Err(_) => return Close,
+                    Err(_) => {
+                        return respond_with(
+                            Close,
+                            HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                            &mut stream,
+                        )
+                        .await
+                    }
                 };
 
                 continue;
@@ -99,11 +128,12 @@ where
     {
         let path_and_query = match uri.path_and_query {
             None => {
-                let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                if stream.write_all(response.as_bytes()).await.is_err() {
-                    return Close;
-                }
-                return keep_alive_if(client_request_header);
+                return respond_with(
+                    keep_alive_if(client_request_header),
+                    HttpResponseStatus::BAD_REQUEST,
+                    stream,
+                )
+                .await
             }
             Some(s) => s.to_string(),
         };
@@ -121,31 +151,21 @@ where
 
         match fetch_request.generate() {
             None => {
-                if stream
-                    .write_all(
-                        HttpResponseStatus::INTERNAL_SERVER_ERROR
-                            .to_response()
-                            .as_bytes(),
-                    )
-                    .await
-                    .is_err()
-                {
-                    return Close;
-                }
-                return keep_alive_if(client_request_header);
+                return respond_with(
+                    keep_alive_if(client_request_header),
+                    HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                    stream,
+                )
+                .await
             }
             Some(s) => {
-                if fetch_stream.write_all(s.as_bytes()).await.is_err()
-                    && stream
-                        .write_all(
-                            HttpResponseStatus::INTERNAL_SERVER_ERROR
-                                .to_response()
-                                .as_bytes(),
-                        )
-                        .await
-                        .is_err()
-                {
-                    return Close;
+                if fetch_stream.write_all(s.as_bytes()).await.is_err() {
+                    return respond_with(
+                        keep_alive_if(client_request_header),
+                        HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                        stream,
+                    )
+                    .await;
                 }
             }
         };
@@ -156,11 +176,12 @@ where
             match HttpResponseHeader::from_tcp_buffer_async(&mut fetch_buf_reader).await {
                 None => {
                     eprintln!("Error: unable to extract header");
-                    let response = HttpResponseStatus::BAD_GATEWAY.to_response();
-                    if stream.write_all(response.as_bytes()).await.is_err() {
-                        return Close;
-                    }
-                    return keep_alive_if(client_request_header);
+                    return respond_with(
+                        keep_alive_if(client_request_header),
+                        HttpResponseStatus::BAD_GATEWAY,
+                        stream,
+                    )
+                    .await;
                 }
                 Some(s) => s,
             };
@@ -169,37 +190,41 @@ where
             200 => {
                 let cache_file_parent = match cache_file_path.parent() {
                     None => {
-                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                        if stream.write_all(response.as_bytes()).await.is_err() {
-                            return Close;
-                        }
-                        return keep_alive_if(client_request_header);
+                        return respond_with(
+                            keep_alive_if(client_request_header),
+                            HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                            stream,
+                        )
+                        .await
                     }
                     Some(p) => p,
                 };
                 match create_dir_all(cache_file_parent).await {
                     Ok(_) => {}
                     Err(_) => {
-                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                        if stream.write_all(response.as_bytes()).await.is_err() {
-                            return Close;
-                        }
+                        return respond_with(
+                            keep_alive_if(client_request_header),
+                            HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                            stream,
+                        )
+                        .await
                     }
                 }
                 let mut file = match File::create(&cache_file_path).await {
                     Err(_) => {
-                        let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                        if stream.write_all(response.as_bytes()).await.is_err() {
-                            return Close;
-                        }
-                        return keep_alive_if(client_request_header);
+                        return respond_with(
+                            keep_alive_if(client_request_header),
+                            HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                            stream,
+                        )
+                        .await
                     }
                     Ok(file) => file,
                 };
 
                 match write_to_client(&mut fetch_response_header, &mut stream).await {
-                    Ok(_) => {}
-                    Err(_) => return Close,
+                    Ok(o) => o,
+                    Err(_) => return Close, /* Something broke */
                 }
 
                 let (write_stream, write_file);
@@ -214,29 +239,32 @@ where
                         )
                         .await
                     } else {
-                        let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                        if stream.write_all(response.as_bytes()).await.is_err() {
-                            return Close;
-                        }
-                        return keep_alive_if(client_request_header);
+                        return respond_with(
+                            keep_alive_if(client_request_header),
+                            HttpResponseStatus::BAD_REQUEST,
+                            stream,
+                        )
+                        .await;
                     }
                 } else {
                     let content_length = match fetch_response_header.headers.get("Content-Length") {
                         None => {
-                            let response = HttpResponseStatus::INTERNAL_SERVER_ERROR.to_response();
-                            if stream.write_all(response.as_bytes()).await.is_err() {
-                                return Close;
-                            }
-                            return keep_alive_if(client_request_header);
+                            return respond_with(
+                                keep_alive_if(client_request_header),
+                                HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                                stream,
+                            )
+                            .await
                         }
                         Some(s) => match s.parse::<u64>() {
                             Ok(u) => u,
                             Err(_) => {
-                                let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                                if stream.write_all(response.as_bytes()).await.is_err() {
-                                    return Close;
-                                }
-                                return keep_alive_if(client_request_header);
+                                return respond_with(
+                                    keep_alive_if(client_request_header),
+                                    HttpResponseStatus::BAD_REQUEST,
+                                    stream,
+                                )
+                                .await
                             }
                         },
                     };
@@ -271,20 +299,20 @@ where
                         }
                     }
                 } else if cache_file_path.is_file() {
-                    /* Something has gone wrong, undefined state */
                     let _ = remove_file(cache_file_path).await;
-                    return Close;
+                    return Close; /* Something has gone wrong mid-transmission */
                 }
-                keep_alive_if(client_request_header)
+                keep_alive_if(client_request_header) /* Next request ready */
             }
             302 => {
                 let url = match fetch_response_header.headers.get("Location") {
                     None => {
-                        let response = HttpResponseStatus::BAD_REQUEST.to_response();
-                        if stream.write_all(response.as_bytes()).await.is_err() {
-                            return Close;
-                        }
-                        return keep_alive_if(client_request_header);
+                        return respond_with(
+                            keep_alive_if(client_request_header),
+                            HttpResponseStatus::BAD_REQUEST,
+                            stream,
+                        )
+                        .await
                     }
                     Some(s) => s,
                 };
@@ -292,8 +320,10 @@ where
             }
             _ => {
                 let pass_through = fetch_response_header.generate();
-                let _ = stream.write_all(pass_through.as_bytes()).await;
-                keep_alive_if(client_request_header)
+                match stream.write_all(pass_through.as_bytes()).await {
+                    Ok(_) => keep_alive_if(client_request_header),
+                    Err(_) => Close,
+                }
             }
         }
     }

@@ -20,7 +20,10 @@ use {
 
 use {
     crate::{
-        http::{ConnectionReturn::Keep, X_PROXY_CACHE_PATH},
+        http::{
+            respond_with, ConnectionReturn, ConnectionReturn::Keep, HttpResponseStatus,
+            X_PROXY_CACHE_PATH,
+        },
         serve::{read_http_request, serve_http_request},
     },
     std::{path::PathBuf, sync::Arc},
@@ -154,6 +157,10 @@ async fn listen_for_https(
     stream: &mut TcpStream,
     certificates: &Arc<CertificateSetup>,
 ) {
+    if respond_with(Keep, HttpResponseStatus::OK, stream).await == ConnectionReturn::Close {
+        return;
+    };
+
     let acceptor = certificates.server_config.clone();
 
     let mut stream = match acceptor.accept(stream).await {
