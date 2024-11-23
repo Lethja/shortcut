@@ -21,6 +21,12 @@ pub(crate) struct Uri<'a> {
     pub(crate) path_and_query: Option<&'a str>,
 }
 
+impl PartialEq for Uri<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.uri == other.uri
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) enum UriKind {
     AbsoluteAddress,
