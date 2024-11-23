@@ -83,6 +83,7 @@ where
                         .await
                     }
                 }
+                #[cfg(feature = "https")]
                 respond_with(
                     keep_alive_if(&client_request_header),
                     HttpResponseStatus::INTERNAL_SERVER_ERROR,

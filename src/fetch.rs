@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use {
     crate::{
         conn::{FetchRequest, Uri},
@@ -60,8 +61,11 @@ where
         }
     };
 
+    let mut redirects: VecDeque<String> = VecDeque::new();
+    redirects.push_back(fetch_request.uri().uri.clone());
+
     loop {
-        let uri = Uri::from(fetch_request.uri()); //TODO: remove copy
+        let uri = redirects.back().unwrap();
 
         let mut fetch_stream = match fetch_request.as_stream() {
             None => {
@@ -75,8 +79,10 @@ where
             Some(f) => f,
         };
 
+        let current_uri = Uri::from(uri);
+
         let fetch_result = fetch(
-            &uri,
+            &current_uri,
             &cache_file_path,
             &client_request_header,
             &mut fetch_stream,
@@ -88,11 +94,29 @@ where
 
         match fetch_result {
             Redirect(r) => {
-                let new_url = Uri::from(r);
+                if redirects.len() > 5 {
+                    return respond_with(
+                        Close,
+                        HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                        &mut stream,
+                    )
+                    .await;
+                }
+
+                if redirects.contains(&r) {
+                    return respond_with(
+                        Close,
+                        HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                        &mut stream,
+                    )
+                    .await;
+                } else {
+                    redirects.push_back(r);
+                }
 
                 match fetch_request
                     .redirect(
-                        &new_url,
+                        &current_uri,
                         #[cfg(feature = "https")]
                         certificates,
                     )

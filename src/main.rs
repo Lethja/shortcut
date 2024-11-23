@@ -13,17 +13,14 @@ use {
             Uri,
             UriKind::{AbsoluteAddress, Host},
         },
-        http::ConnectionReturn::Upgrade,
+        http::{respond_with, ConnectionReturn, ConnectionReturn::Upgrade, HttpResponseStatus},
     },
     tokio::net::TcpStream,
 };
 
 use {
     crate::{
-        http::{
-            respond_with, ConnectionReturn, ConnectionReturn::Keep, HttpResponseStatus,
-            X_PROXY_CACHE_PATH,
-        },
+        http::{ConnectionReturn::Keep, X_PROXY_CACHE_PATH},
         serve::{read_http_request, serve_http_request},
     },
     std::{path::PathBuf, sync::Arc},
