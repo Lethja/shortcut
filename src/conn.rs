@@ -101,18 +101,18 @@ impl<'a> Uri<'a> {
 
     pub(crate) fn kind(&self) -> UriKind {
         match (self.scheme, self.host, self.port, self.path) {
-            (Some(_), Some(_), Some(_), Some(_)) => UriKind::ResolvedAddress,
-            (_, Some(_), Some(_), Some(_)) => UriKind::AbsoluteAddress,
-            (_, Some(_), Some(_), _) => UriKind::Host,
-            (_, Some(_), _, Some(_)) => UriKind::RelativeAddress,
+            (Some(_), Some(_), Some(_), Some(_)) => ResolvedAddress,
+            (_, Some(_), Some(_), Some(_)) => AbsoluteAddress,
+            (_, Some(_), Some(_), _) => Host,
+            (_, Some(_), _, Some(_)) => RelativeAddress,
             (_, _, _, Some(path)) => {
                 if path.starts_with('/') {
-                    UriKind::AbsolutePath
+                    AbsolutePath
                 } else {
-                    UriKind::Invalid
+                    Invalid
                 }
             }
-            _ => UriKind::Invalid,
+            _ => Invalid,
         }
     }
 
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn test_uri_absolute_address() {
         let uri = Uri::new("http://example.com/path".to_string());
-        assert_eq!(uri.kind(), UriKind::AbsoluteAddress);
+        assert_eq!(uri.kind(), ResolvedAddress);
         assert_eq!(uri.scheme, Some("http://"));
         assert_eq!(uri.host, Some("example.com"));
         assert_eq!(uri.port, Some(80));
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn test_uri_absolute_address_with_query() {
         let uri = Uri::new("http://example.com/path?query=something".to_string());
-        assert_eq!(uri.kind(), UriKind::AbsoluteAddress);
+        assert_eq!(uri.kind(), ResolvedAddress);
         assert_eq!(uri.scheme, Some("http://"));
         assert_eq!(uri.host, Some("example.com"));
         assert_eq!(uri.port, Some(80));
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn test_uri_absolute_address_with_port() {
         let uri = Uri::new("https://example.com:8443/path?query=something".to_string());
-        assert_eq!(uri.kind(), UriKind::AbsoluteAddress);
+        assert_eq!(uri.kind(), ResolvedAddress);
         assert_eq!(uri.scheme, Some("https://"));
         assert_eq!(uri.host, Some("example.com"));
         assert_eq!(uri.port, Some(8443));
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn test_uri_absolute_path() {
         let uri = Uri::new("/path/to/resource".to_string());
-        assert_eq!(uri.kind(), UriKind::AbsolutePath);
+        assert_eq!(uri.kind(), AbsolutePath);
         assert_eq!(uri.scheme, None);
         assert_eq!(uri.host, None);
         assert_eq!(uri.port, None);
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_uri_absolute_path_with_query() {
         let uri = Uri::new("/path/to/resource?query=something".to_string());
-        assert_eq!(uri.kind(), UriKind::AbsolutePath);
+        assert_eq!(uri.kind(), AbsolutePath);
         assert_eq!(uri.scheme, None);
         assert_eq!(uri.host, None);
         assert_eq!(uri.port, None);
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn test_uri_invalid() {
         let uri = Uri::new("not_a_valid_uri".to_string());
-        assert_eq!(uri.kind(), UriKind::Invalid);
+        assert_eq!(uri.kind(), Invalid);
         assert_eq!(uri.scheme, None);
         assert_eq!(uri.host, None);
         assert_eq!(uri.port, None);
