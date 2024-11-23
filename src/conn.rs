@@ -1,10 +1,11 @@
-use std::{fmt, pin::Pin};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::TcpStream,
+use {
+    crate::conn::{FetchRequestError::*, StreamType::*, UriKind::*},
+    std::{collections::VecDeque, fmt, pin::Pin},
+    tokio::{
+        io::{AsyncRead, AsyncWrite},
+        net::TcpStream,
+    },
 };
-
-use crate::conn::{FetchRequestError::*, StreamType::*};
 
 #[cfg(feature = "https")]
 use {std::convert::TryFrom, tokio_rustls::client};
@@ -40,6 +41,30 @@ pub(crate) enum UriKind {
 impl<'a> From<String> for Uri<'a> {
     fn from(uri: String) -> Self {
         Uri::new(uri)
+    }
+}
+
+impl<'a> From<VecDeque<String>> for Uri<'a> {
+    fn from(uris: VecDeque<String>) -> Self {
+        let mut r = match uris.back().clone() {
+            None => return Uri::from("".to_string()),
+            Some(r) => Uri::from(r),
+        };
+
+        if r.kind() == ResolvedAddress {
+            return r;
+        }
+
+        if uris.len() > 1 {
+            for u in uris.range(0..uris.len() - 1).rev() {
+                let i = Uri::from(u);
+                r = r.merge_with(&i);
+                if r.kind() == ResolvedAddress {
+                    return r;
+                }
+            }
+        }
+        r
     }
 }
 
@@ -91,7 +116,6 @@ impl<'a> Uri<'a> {
         }
     }
 
-    #[cfg(feature = "https")]
     pub(crate) fn merge_with(&self, other: &Uri) -> Uri<'a> {
         let scheme = match (self.scheme, other.scheme) {
             (None, Some(s)) => Some(s),
@@ -99,28 +123,46 @@ impl<'a> Uri<'a> {
             _ => None,
         };
 
-        let host = match (self.host, other.host) {
-            (None, Some(s)) => Some(s),
-            (Some(s), _) => Some(s),
-            _ => None,
+        let (host, port) = if self.same_host_as(other) {
+            (self.host, self.port)
+        } else {
+            let host = match (self.host, other.host) {
+                (None, Some(s)) => Some(s),
+                (Some(s), _) => Some(s),
+                _ => None,
+            };
+
+            let port = match (self.port, other.port) {
+                (None, Some(s)) => Some(s),
+                (Some(s), _) => Some(s),
+                _ => None,
+            };
+
+            (host, port)
         };
 
-        let port = match (self.port, other.port) {
-            (None, Some(s)) => Some(s.to_string()),
-            (Some(s), _) => Some(s.to_string()),
-            _ => None,
-        };
+        let (path, query) = if self.path_and_query == other.path_and_query {
+            (self.path, self.query)
+        } else {
+            let path = match (self.path, other.path) {
+                (Some(s), Some(_)) => Some(s),
+                (Some(s), None) => Some(s),
+                (_, Some(s)) => Some(s),
+                _ => None,
+            };
 
-        let path = match (self.path, other.path) {
-            (Some(s), None) => Some(s),
-            (_, Some(s)) => Some(s),
-            _ => None,
-        };
+            let query = if self.path == other.path {
+                other.query
+            } else {
+                match (self.query, other.query) {
+                    (Some(s), Some(_)) => Some(s),
+                    (_, Some(s)) => Some(s),
+                    (Some(s), None) => Some(s),
+                    _ => None,
+                }
+            };
 
-        let query = match (self.query, other.query) {
-            (Some(s), None) => Some(s),
-            (_, Some(s)) => Some(s),
-            _ => None,
+            (path, query)
         };
 
         let uri = format!(
@@ -236,6 +278,12 @@ impl<'a> Uri<'a> {
         self.scheme = find_scheme(&self.uri);
         self.host = find_host(&self.uri);
         self.port = find_port(&self.uri);
+
+        if self.host.is_some() && self.kind() == Invalid {
+            self.path = self.host;
+            self.host = None;
+        }
+
         (self.path, self.query, self.path_and_query) = slice_path(&self.uri);
     }
 }
@@ -451,18 +499,6 @@ mod tests {
     }
 
     #[test]
-    fn test_uri_relative_address() {
-        let uri = Uri::new("example.com/path?query=something".to_string());
-        assert_eq!(uri.kind(), UriKind::RelativeAddress);
-        assert_eq!(uri.scheme, None);
-        assert_eq!(uri.host, Some("example.com"));
-        assert_eq!(uri.port, None);
-        assert_eq!(uri.path, Some("/path"));
-        assert_eq!(uri.query, Some("query=something"));
-        assert_eq!(uri.path_and_query, Some("/path?query=something"));
-    }
-
-    #[test]
     fn test_uri_absolute_path() {
         let uri = Uri::new("/path/to/resource".to_string());
         assert_eq!(uri.kind(), UriKind::AbsolutePath);
@@ -499,5 +535,56 @@ mod tests {
         assert_eq!(uri.path, None);
         assert_eq!(uri.query, None);
         assert_eq!(uri.path_and_query, None);
+    }
+
+    #[test]
+    fn test_uri_merge_with_host_then_path() {
+        let mut uris = VecDeque::new();
+        uris.push_back("http://example.com".to_string());
+        uris.push_back("/path/to/resource".to_string());
+
+        let uri = Uri::from(uris);
+
+        assert_eq!(uri.kind(), ResolvedAddress);
+        assert_eq!(uri.scheme, Some("http://"));
+        assert_eq!(uri.host, Some("example.com"));
+        assert_eq!(uri.port, Some(80));
+        assert_eq!(uri.path, Some("/path/to/resource"));
+        assert_eq!(uri.query, None);
+        assert_eq!(uri.path_and_query, Some("/path/to/resource"));
+    }
+
+    #[test]
+    fn test_uri_merge_with_path_then_host() {
+        let mut uris = VecDeque::new();
+        uris.push_back("/path/to/resource".to_string());
+        uris.push_back("http://example.com".to_string());
+
+        let uri = Uri::from(uris);
+
+        assert_eq!(uri.kind(), ResolvedAddress);
+        assert_eq!(uri.scheme, Some("http://"));
+        assert_eq!(uri.host, Some("example.com"));
+        assert_eq!(uri.port, Some(80));
+        assert_eq!(uri.path, Some("/path/to/resource"));
+        assert_eq!(uri.query, None);
+        assert_eq!(uri.path_and_query, Some("/path/to/resource"));
+    }
+
+    #[test]
+    fn test_uri_merge_with_resolved_then_path() {
+        let mut uris = VecDeque::new();
+        uris.push_back("http://example.com/foo".to_string());
+        uris.push_back("/bar".to_string());
+
+        let uri = Uri::from(uris);
+
+        assert_eq!(uri.kind(), ResolvedAddress);
+        assert_eq!(uri.scheme, Some("http://"));
+        assert_eq!(uri.host, Some("example.com"));
+        assert_eq!(uri.port, Some(80));
+        assert_eq!(uri.path, Some("/bar"));
+        assert_eq!(uri.query, None);
+        assert_eq!(uri.path_and_query, Some("/bar"));
     }
 }
