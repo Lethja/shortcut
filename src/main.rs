@@ -167,8 +167,9 @@ async fn listen_for_https(
     };
 
     host.insert_str(0, "https://");
-    let host = Uri::from(host);
+    debug_print!("Connect request to {} is being established", host);
 
+    let host = Uri::from(host);
     if host.kind() != Host {
         return;
     }
