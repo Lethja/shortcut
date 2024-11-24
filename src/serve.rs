@@ -125,12 +125,7 @@ where
                 client_request_header.request.port,
             ) {
                 (Some(_), Some(_)) => {
-                    respond_with(
-                        Upgrade(client_request_header.request.uri),
-                        HttpResponseStatus::INTERNAL_SERVER_ERROR,
-                        &mut stream,
-                    )
-                    .await
+                    Upgrade(client_request_header.request.uri)
                 }
                 _ => {
                     respond_with(
