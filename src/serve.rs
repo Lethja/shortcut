@@ -124,9 +124,7 @@ where
                 client_request_header.request.host,
                 client_request_header.request.port,
             ) {
-                (Some(_), Some(_)) => {
-                    Upgrade(client_request_header.request.uri)
-                }
+                (Some(_), Some(_)) => Upgrade(client_request_header.request.uri),
                 _ => {
                     respond_with(
                         Close,

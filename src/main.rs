@@ -10,10 +10,7 @@ mod serve;
 use {
     crate::{
         cert::{setup_certificates, CertificateSetup},
-        conn::{
-            Uri,
-            UriKind::*,
-        },
+        conn::{Uri, UriKind::*},
         http::{respond_with, ConnectionReturn, ConnectionReturn::Upgrade, HttpResponseStatus},
     },
     tokio::net::TcpStream,
