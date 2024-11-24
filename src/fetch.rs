@@ -333,7 +333,7 @@ where
                 }
                 keep_alive_if(client_request_header) /* Next request ready */
             }
-            302 => {
+            301..303 | 307..308 => {
                 let url = match fetch_response_header.headers.get("Location") {
                     None => {
                         return respond_with(
