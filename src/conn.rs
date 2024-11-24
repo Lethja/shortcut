@@ -47,8 +47,8 @@ impl<'a> From<String> for Uri<'a> {
     }
 }
 
-impl<'a> From<VecDeque<String>> for Uri<'a> {
-    fn from(uris: VecDeque<String>) -> Self {
+impl<'a> From<&VecDeque<String>> for Uri<'a> {
+    fn from(uris: &VecDeque<String>) -> Self {
         let mut r = match uris.back().clone() {
             None => return Uri::from("".to_string()),
             Some(r) => Uri::from(r),

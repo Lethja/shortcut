@@ -117,9 +117,11 @@ where
                     redirects.push_back(r);
                 }
 
+                let new_uri = Uri::from(&redirects);
+
                 match fetch_request
                     .redirect(
-                        &current_uri,
+                        &new_uri,
                         #[cfg(feature = "https")]
                         certificates,
                     )
