@@ -155,6 +155,18 @@ where
         R: AsyncRead + AsyncWrite + Unpin,
         S: AsyncRead + AsyncWrite + Unpin,
     {
+        let host = match uri.host {
+            None => {
+                return respond_with(
+                    keep_alive_if(client_request_header),
+                    HttpResponseStatus::BAD_REQUEST,
+                    stream,
+                )
+                    .await
+            }
+            Some(s) => s.to_string(),
+        };
+
         let path_and_query = match uri.path_and_query {
             None => {
                 return respond_with(
@@ -174,6 +186,7 @@ where
             headers: {
                 let mut headers = client_request_header.headers.clone();
                 headers.remove("Range"); /* Not cached so need to download from start */
+                headers.insert("Host".to_string(), host); /* Host field is mandatory on HTTP 1.1 */
                 headers
             },
         };
