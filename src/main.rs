@@ -1,6 +1,7 @@
 #[cfg(feature = "https")]
 mod cert;
 mod conn;
+mod debug;
 mod fetch;
 mod http;
 mod serve;

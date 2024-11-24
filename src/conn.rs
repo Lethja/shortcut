@@ -1,5 +1,8 @@
 use {
-    crate::conn::{FetchRequestError::*, StreamType::*, UriKind::*},
+    crate::{
+        conn::{FetchRequestError::*, StreamType::*, UriKind::*},
+        debug_print,
+    },
     std::{collections::VecDeque, fmt, pin::Pin},
     tokio::{
         io::{AsyncRead, AsyncWrite},
@@ -416,6 +419,7 @@ impl FetchRequest<'_> {
 
         match compare.same_host_as(other) {
             true => {
+                debug_print!("{} is the same host as {}", self.uri.uri, other.uri);
                 if let Some(new_path) = other.path_and_query {
                     let new = format!(
                         "{}{}{}",
@@ -429,6 +433,7 @@ impl FetchRequest<'_> {
                 Err(InvalidUri)
             }
             false => {
+                debug_print!("{} is not same as host {}", self.uri.uri, other.uri);
                 self.uri = Uri::from(other);
                 match self
                     .connect(

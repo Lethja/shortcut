@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use {
     crate::{
         conn::{FetchRequest, Uri},
+        debug_print,
         http::{
             fetch_and_serve_chunk, fetch_and_serve_known_length, keep_alive_if, respond_with,
             ConnectionReturn,
@@ -80,6 +81,8 @@ where
         };
 
         let current_uri = Uri::from(uri);
+
+        debug_print!("Fetching {}", current_uri.uri);
 
         let fetch_result = fetch(
             &current_uri,
