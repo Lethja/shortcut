@@ -400,7 +400,10 @@ impl FetchRequest<'_> {
                 let stream: StreamType =
                     match certificates.client_config.connect(domain, stream).await {
                         Ok(s) => TlsClient(s),
-                        Err(e) => return Err(TlsConnectionError(e.to_string())),
+                        Err(e) => return {
+                            debug_print!("HTTPS connect error '{e}'");
+                            Err(TlsConnectionError(e.to_string()))
+                        },
                     };
 
                 self.stream = stream;
