@@ -12,7 +12,7 @@ use {
         cert::{setup_certificates, CertificateSetup},
         conn::{
             Uri,
-            UriKind::{AbsoluteAddress, Host},
+            UriKind::*,
         },
         http::{respond_with, ConnectionReturn, ConnectionReturn::Upgrade, HttpResponseStatus},
     },
@@ -182,7 +182,7 @@ async fn listen_for_https(
             Some(x) => x,
         };
 
-        if client_request.request.kind() != AbsoluteAddress {
+        if client_request.request.kind() != ResolvedAddress {
             client_request.request = client_request.request.merge_with(&host);
         }
 
