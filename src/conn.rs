@@ -587,4 +587,21 @@ mod tests {
         assert_eq!(uri.query, None);
         assert_eq!(uri.path_and_query, Some("/bar"));
     }
+
+    #[test]
+    fn test_uri_merge_with_resolved_then_resolved() {
+        let mut uris = VecDeque::new();
+        uris.push_back("http://example.com/foo".to_string());
+        uris.push_back("https://example.com/foo".to_string());
+
+        let uri = Uri::from(uris);
+
+        assert_eq!(uri.kind(), ResolvedAddress);
+        assert_eq!(uri.scheme, Some("https://"));
+        assert_eq!(uri.host, Some("example.com"));
+        assert_eq!(uri.port, Some(443));
+        assert_eq!(uri.path, Some("/foo"));
+        assert_eq!(uri.query, None);
+        assert_eq!(uri.path_and_query, Some("/foo"));
+    }
 }
