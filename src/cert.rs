@@ -1,14 +1,16 @@
-use crate::{http::X_PROXY_CACHE_PATH, PKG_NAME};
-use pnet::datalink;
-use rcgen::{generate_simple_self_signed, CertifiedKey};
-use rustls::{
-    pki_types::pem::PemObject,
-    pki_types::{CertificateDer, PrivateKeyDer},
-    ClientConfig, RootCertStore, ServerConfig,
+use {
+    crate::{http::X_PROXY_CACHE_PATH, PKG_NAME},
+    pnet::datalink,
+    rcgen::{generate_simple_self_signed, CertifiedKey},
+    rustls::{
+        pki_types::pem::PemObject,
+        pki_types::{CertificateDer, PrivateKeyDer},
+        ClientConfig, RootCertStore, ServerConfig,
+    },
+    rustls_native_certs::load_native_certs,
+    std::{net::IpAddr, path::PathBuf, sync::Arc},
+    tokio_rustls::{TlsAcceptor, TlsConnector},
 };
-use rustls_native_certs::load_native_certs;
-use std::{net::IpAddr, path::PathBuf, sync::Arc};
-use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 pub const X_PROXY_TLS_PATH: &str = "X_PROXY_TLS_PATH";
 
@@ -18,6 +20,90 @@ pub(crate) struct CertificateSetup {
     pub(crate) client_config: Arc<TlsConnector>,
     pub(crate) server_config: Arc<TlsAcceptor>,
     pub(crate) server_cert_path: PathBuf,
+}
+
+#[cfg(debug_assertions)]
+/// **DO NOT USE THIS FUNCTION IN PRODUCTION**.
+/// By bypassing all certificate checks, it exposes the connection to potential security risks,
+/// including man-in-the-middle attacks.
+/// This function should only be used
+/// to simplify debugging of HTTPS connections during development.
+fn treat_certificates_as_gospel() -> Arc<TlsConnector> {
+    use {
+        rustls::{
+            client::danger::ServerCertVerifier,
+            client::danger::{HandshakeSignatureValid, ServerCertVerified},
+            pki_types::{ServerName, UnixTime},
+            DigitallySignedStruct, Error, SignatureScheme,
+        },
+        std::fmt::{Debug, Formatter},
+    };
+
+    struct NoCertificateVerification;
+
+    impl Debug for NoCertificateVerification {
+        fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+            write!(f, "NoCertificateVerification")
+        }
+    }
+
+    impl ServerCertVerifier for NoCertificateVerification {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: UnixTime,
+        ) -> Result<ServerCertVerified, Error> {
+            Ok(ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            vec![
+                SignatureScheme::ECDSA_NISTP256_SHA256,
+                SignatureScheme::ECDSA_NISTP384_SHA384,
+                SignatureScheme::RSA_PSS_SHA256,
+                SignatureScheme::RSA_PSS_SHA384,
+                SignatureScheme::RSA_PSS_SHA512,
+                SignatureScheme::ED25519,
+            ]
+        }
+    }
+
+    eprintln!(
+        "{PKG_NAME} will treat all HTTPS certificates as gospel for debugging purposes...\
+        \n\nDO NOT USE THIS VERSION IN PRODUCTION!\n"
+    );
+
+    let config = ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+        .with_no_client_auth();
+
+    // Create a ClientConfig with safe defaults and no client authentication
+    let config = Arc::new(config);
+
+    // Wrap the configuration in an Arc and return the TlsConnector
+    Arc::new(TlsConnector::from(config))
 }
 
 fn load_system_certificates() -> Arc<TlsConnector> {
@@ -199,6 +285,13 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
 }
 
 pub(crate) fn setup_certificates() -> CertificateSetup {
+    #[cfg(debug_assertions)]
+    let client_config = match std::env::var("X_PROXY_CERT_GOSPEL") {
+        Ok(_) => treat_certificates_as_gospel(),
+        Err(_) => load_system_certificates(),
+    };
+
+    #[cfg(not(debug_assertions))]
     let client_config = load_system_certificates();
     let (server_cert_path, server_key_path) = check_or_create_tls();
     let server_config = load_server_certificates(&server_cert_path, &server_key_path);
