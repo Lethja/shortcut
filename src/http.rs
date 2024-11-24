@@ -19,7 +19,7 @@ const END_OF_HTTP_HEADER_LINE: &str = "\r\n";
 
 pub const X_PROXY_CACHE_PATH: &str = "X_PROXY_CACHE_PATH";
 
-/* 16 kibi-bytes will occupy half of l1d on a typical x86_64 core */
+/* 16 KiB will occupy half of l1d on a typical x86_64 core */
 pub const BUFFER_SIZE: usize = 16384;
 const WAIT_TIMEOUT_SECONDS: u64 = 10;
 
@@ -243,6 +243,33 @@ pub(crate) async fn get_cache_name(url: &HttpRequestHeader<'_>) -> Option<PathBu
     Some(path)
 }
 
+#[inline]
+async fn read_header_or_timeout<T>(
+    value: &mut BufReader<T>,
+    buffer: &mut Vec<u8>,
+    buffer_size: &mut usize,
+    filter: &[u8],
+) -> Option<()>
+where
+    T: AsyncReadExt + Unpin,
+{
+    match time::timeout(
+        Duration::from_secs(10),
+        value.read_until(filter[filter.len() - 1], buffer),
+    )
+    .await
+    {
+        Ok(Ok(i)) => {
+            *buffer_size += i;
+            if *buffer_size >= BUFFER_SIZE {
+                return None;
+            }
+        }
+        Ok(Err(_)) | Err(_) => return None,
+    }
+    Some(())
+}
+
 impl HttpRequestHeader<'_> {
     pub(crate) async fn from_tcp_buffer_async<T>(value: &mut BufReader<T>) -> Option<Self>
     where
@@ -254,19 +281,11 @@ impl HttpRequestHeader<'_> {
         let filter = END_OF_HTTP_HEADER.as_bytes();
 
         while !buffer.ends_with(filter) {
-            match time::timeout(
-                Duration::from_secs(10),
-                value.read_until(filter[filter.len() - 1], &mut buffer),
-            )
-            .await
+            if read_header_or_timeout(value, &mut buffer, &mut buffer_size, filter)
+                .await
+                .is_none()
             {
-                Ok(Ok(i)) => {
-                    buffer_size += i;
-                    if buffer_size >= BUFFER_SIZE {
-                        return None;
-                    }
-                }
-                Ok(Err(_)) | Err(_) => return None,
+                return None;
             }
 
             if begin.elapsed() >= Duration::from_secs(60) {
@@ -537,19 +556,11 @@ impl HttpResponseHeader {
         let filter = END_OF_HTTP_HEADER.as_bytes();
 
         while !buffer.ends_with(filter) {
-            match time::timeout(
-                Duration::from_secs(5),
-                value.read_until(filter[filter.len() - 1], &mut buffer),
-            )
-            .await
+            if read_header_or_timeout(value, &mut buffer, &mut buffer_size, filter)
+                .await
+                .is_none()
             {
-                Ok(Ok(i)) => {
-                    buffer_size += i;
-                    if buffer_size >= BUFFER_SIZE {
-                        return None;
-                    }
-                }
-                Ok(Err(_)) | Err(_) => return None,
+                return None;
             }
 
             if begin.elapsed() >= Duration::from_secs(10) {

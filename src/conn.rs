@@ -180,7 +180,7 @@ impl<'a> Uri<'a> {
     }
 
     pub(crate) fn same_host_as(&self, other: &Uri) -> bool {
-        other.kind() == UriKind::AbsolutePath || self.host == other.host && self.port == other.port
+        other.kind() == AbsolutePath || self.host == other.host && self.port == other.port
     }
 
     pub(crate) fn host_and_port(&self) -> Option<String> {
