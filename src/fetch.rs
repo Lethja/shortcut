@@ -201,6 +201,7 @@ where
                 .await
             }
             Some(s) => {
+                debug_print!("Writing header\n\n{}", s);
                 if fetch_stream.write_all(s.as_bytes()).await.is_err() {
                     return respond_with(
                         keep_alive_if(client_request_header),
@@ -361,8 +362,9 @@ where
                 Redirect(String::from(url))
             }
             x => {
-                debug_print!("Proxy will pass-through {x} from server to client");
                 let pass_through = fetch_response_header.generate();
+                debug_print!("Proxy will pass-through {x} from server to client\n\
+                 Header as follows:\n\n{pass_through}");
                 match stream.write_all(pass_through.as_bytes()).await {
                     Ok(_) => keep_alive_if(client_request_header),
                     Err(_) => Close,
