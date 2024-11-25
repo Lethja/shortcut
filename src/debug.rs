@@ -2,6 +2,6 @@
 macro_rules! debug_print {
     ($($arg:tt)*) => {
         #[cfg(debug_assertions)]
-        eprintln!("{}:{}; {}", file!(), line!(), format!($($arg)*));
+        eprintln!("{}:{}\n{}\n", file!(), line!(), format!($($arg)*));
     };
 }
