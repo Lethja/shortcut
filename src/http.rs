@@ -324,7 +324,7 @@ impl HttpRequestHeader<'_> {
     }
 
     pub(crate) fn generate(&self) -> Option<String> {
-        let path = match self.request.path {
+        let path = match self.request.path_and_query {
             None => return None,
             Some(p) => p,
         };
