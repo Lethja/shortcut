@@ -138,7 +138,7 @@ where
         _ => {
             respond_with(
                 keep_alive_if(&client_request_header),
-                HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                HttpResponseStatus::METHOD_NOT_ALLOWED,
                 &mut stream,
             )
             .await
