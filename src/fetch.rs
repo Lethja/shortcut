@@ -274,7 +274,7 @@ where
 
                 if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
                     if v.to_lowercase() == "chunked" {
-                        (write_stream, write_file) = fetch_and_serve_chunk(
+                        (write_file, write_stream) = fetch_and_serve_chunk(
                             cache_file_path,
                             &mut stream,
                             &mut fetch_buf_reader,
@@ -312,7 +312,7 @@ where
                         },
                     };
 
-                    (write_stream, write_file) = fetch_and_serve_known_length(
+                    (write_file, write_stream) = fetch_and_serve_known_length(
                         cache_file_path,
                         &mut stream,
                         content_length,
