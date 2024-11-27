@@ -1,3 +1,6 @@
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use {
     crate::{
         conn::{FetchRequestError::*, StreamType::*, UriKind::*},
@@ -465,6 +468,33 @@ impl FetchRequest<'_> {
             //#[cfg(feature = "https")]
             //TlsServer(ref mut stream) => Some(Box::pin(stream)),
         }
+    }
+}
+
+pub(crate) struct Flights {
+    in_flight: Arc<Mutex<HashSet<String>>>
+}
+
+impl Flights {
+    pub fn new() -> Self {
+        Flights {
+            in_flight: Arc::new(Mutex::new(HashSet::<String>::new())),
+        }
+    }
+
+    pub async fn takeoff(&self, cache_file_path: &String) {
+        let mut files = self.in_flight.lock().await;
+        files.insert(cache_file_path.clone());
+    }
+
+    pub async fn land(&self, cache_file_path: &String) {
+        let mut files = self.in_flight.lock().await;
+        files.remove(cache_file_path);
+    }
+
+    pub async fn is_in_flight(&self, cache_file_path: &String) -> bool{
+        let mut files = self.in_flight.lock().await;
+        files.contains(cache_file_path)
     }
 }
 
