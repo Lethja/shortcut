@@ -1,15 +1,17 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use {
     crate::{
         conn::{FetchRequestError::*, StreamType::*, UriKind::*},
         debug_print,
     },
-    std::{collections::VecDeque, fmt, pin::Pin},
+    std::{
+        collections::{HashSet, VecDeque},
+        fmt,
+        pin::Pin,
+    },
     tokio::{
         io::{AsyncRead, AsyncWrite},
         net::TcpStream,
+        sync::RwLock,
     },
 };
 
@@ -472,28 +474,28 @@ impl FetchRequest<'_> {
 }
 
 pub(crate) struct Flights {
-    in_flight: Arc<Mutex<HashSet<String>>>
+    in_flight: RwLock<HashSet<String>>,
 }
 
 impl Flights {
     pub fn new() -> Self {
         Flights {
-            in_flight: Arc::new(Mutex::new(HashSet::<String>::new())),
+            in_flight: RwLock::new(HashSet::<String>::new()),
         }
     }
 
     pub async fn takeoff(&self, cache_file_path: &String) {
-        let mut files = self.in_flight.lock().await;
+        let mut files = self.in_flight.write().await;
         files.insert(cache_file_path.clone());
     }
 
     pub async fn land(&self, cache_file_path: &String) {
-        let mut files = self.in_flight.lock().await;
+        let mut files = self.in_flight.write().await;
         files.remove(cache_file_path);
     }
 
-    pub async fn is_in_flight(&self, cache_file_path: &String) -> bool{
-        let mut files = self.in_flight.lock().await;
+    pub async fn is_in_flight(&self, cache_file_path: &String) -> bool {
+        let files = self.in_flight.read().await;
         files.contains(cache_file_path)
     }
 }

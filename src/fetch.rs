@@ -1,7 +1,6 @@
-use std::collections::VecDeque;
 use {
     crate::{
-        conn::{FetchRequest, Uri},
+        conn::{FetchRequest, Flights, Uri},
         debug_print,
         http::{
             fetch_and_serve_chunk, fetch_and_serve_known_length, keep_alive_if, respond_with,
@@ -11,7 +10,7 @@ use {
             HttpVersion,
         },
     },
-    std::{path::PathBuf, time::Duration},
+    std::{collections::VecDeque, path::PathBuf, sync::Arc, time::Duration},
     tokio::{
         fs::{create_dir_all, remove_file, File},
         io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
@@ -162,7 +161,7 @@ where
                     HttpResponseStatus::BAD_REQUEST,
                     stream,
                 )
-                    .await
+                .await
             }
             Some(s) => s.to_string(),
         };
@@ -363,8 +362,10 @@ where
             }
             x => {
                 let pass_through = fetch_response_header.generate();
-                debug_print!("Proxy will pass-through {x} from server to client\n\
-                 Header as follows:\n\n{pass_through}");
+                debug_print!(
+                    "Proxy will pass-through {x} from server to client\n\
+                 Header as follows:\n\n{pass_through}"
+                );
                 match stream.write_all(pass_through.as_bytes()).await {
                     Ok(_) => keep_alive_if(client_request_header),
                     Err(_) => Close,

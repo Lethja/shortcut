@@ -18,6 +18,7 @@ use {
 
 use {
     crate::{
+        conn::Flights,
         http::{ConnectionReturn::Keep, X_PROXY_CACHE_PATH},
         serve::{read_http_request, serve_http_request},
     },
@@ -53,6 +54,8 @@ async fn main() {
 
     #[cfg(feature = "https")]
     let certificates = Arc::new(setup_certificates());
+
+    let flight_plan = Arc::new(Flights::new());
 
     let http_bind = std::env::var(X_PROXY_HTTP_LISTEN_ADDRESS).unwrap_or("[::]:3142".to_string());
 
@@ -92,6 +95,7 @@ async fn main() {
     loop {
         listen_for(
             &http_listener,
+            &flight_plan,
             &semaphore,
             #[cfg(feature = "https")]
             &certificates,
@@ -102,6 +106,7 @@ async fn main() {
 
 async fn listen_for(
     http_listener: &TcpListener,
+    flights: &Arc<Flights>,
     semaphore: &Arc<Semaphore>,
     #[cfg(feature = "https")] certificates: &Arc<CertificateSetup>,
 ) {
@@ -116,6 +121,7 @@ async fn listen_for(
     let semaphore = Arc::clone(semaphore);
     #[cfg(feature = "https")]
     let certificates = Arc::clone(certificates);
+    let flights = Arc::clone(flights);
 
     tokio::spawn(async move {
         let _ = match semaphore.acquire().await {
@@ -131,6 +137,7 @@ async fn listen_for(
 
             match serve_http_request(
                 &mut stream,
+                &flights,
                 client_request,
                 #[cfg(feature = "https")]
                 &*certificates,
@@ -138,7 +145,7 @@ async fn listen_for(
             .await
             {
                 #[cfg(feature = "https")]
-                Upgrade(h) => listen_for_https(h, &mut stream, &certificates).await,
+                Upgrade(h) => listen_for_https(h, &mut stream, &flights, &certificates).await,
                 Keep => continue,
                 _ => return,
             }
@@ -150,6 +157,7 @@ async fn listen_for(
 async fn listen_for_https(
     mut host: String,
     stream: &mut TcpStream,
+    flights: &Arc<Flights>,
     certificates: &Arc<CertificateSetup>,
 ) {
     if respond_with(Keep, HttpResponseStatus::OK, stream).await == ConnectionReturn::Close {
@@ -184,7 +192,7 @@ async fn listen_for_https(
             client_request.request = client_request.request.merge_with(&host);
         }
 
-        match serve_http_request(&mut stream, client_request, &*certificates).await {
+        match serve_http_request(&mut stream, flights, client_request, &*certificates).await {
             Keep => continue,
             _ => return,
         }

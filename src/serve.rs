@@ -1,6 +1,7 @@
 use {
     crate::{
         conn,
+        conn::Flights,
         fetch::fetch_and_serve_file,
         http::{
             get_cache_name, keep_alive_if, respond_with, ConnectionReturn, ConnectionReturn::Close,
@@ -8,7 +9,7 @@ use {
             HttpVersion, BUFFER_SIZE,
         },
     },
-    std::{collections::HashMap, io::SeekFrom, path::PathBuf, time::Duration},
+    std::{collections::HashMap, io::SeekFrom, path::PathBuf, sync::Arc, time::Duration},
     tokio::{
         fs::File,
         io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader},
@@ -44,6 +45,7 @@ where
 
 pub(crate) async fn serve_http_request<T>(
     mut stream: T,
+    flights: &Arc<Flights>,
     client_request_header: HttpRequestHeader<'_>,
     #[cfg(feature = "https")] cert: &CertificateSetup,
 ) -> ConnectionReturn
@@ -61,6 +63,7 @@ where
                                 serve_existing_file(
                                     &cert.server_cert_path,
                                     &mut stream,
+                                    flights,
                                     &client_request_header,
                                 )
                                 .await;
@@ -92,7 +95,7 @@ where
                 .await
             }
             _ => {
-                let cache_file_path = match get_cache_name(&client_request_header).await {
+                let (cache_file_path, hash) = match get_cache_name(&client_request_header).await {
                     None => {
                         return respond_with(
                             keep_alive_if(&client_request_header),
@@ -101,20 +104,29 @@ where
                         )
                         .await
                     }
-                    Some(p) => p,
+                    Some(p) => {
+                        let hash = p.to_string_lossy().to_string();
+                        (p,hash)
+                    },
                 };
 
-                if cache_file_path.exists() {
-                    serve_existing_file(&cache_file_path, stream, &client_request_header).await
+                if cache_file_path.exists() || flights.is_in_flight(&hash).await {
+                    serve_existing_file(&cache_file_path, stream, flights, &client_request_header)
+                        .await
                 } else {
-                    fetch_and_serve_file(
+                    flights.takeoff(&hash).await;
+
+                    let r = fetch_and_serve_file(
                         cache_file_path,
                         stream,
                         client_request_header,
                         #[cfg(feature = "https")]
                         cert,
                     )
-                    .await
+                    .await;
+
+                    flights.land(&hash).await;
+                    r
                 }
             }
         },
@@ -146,9 +158,22 @@ where
     }
 }
 
+async fn serve_in_flight_file<T>(
+    cache_file: File,
+    mut stream: T,
+    flights: &Arc<Flights>,
+    client_request_header: &HttpRequestHeader<'_>,
+) -> ConnectionReturn
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    todo!("Handle in-flight file serves")
+}
+
 async fn serve_existing_file<T>(
     cache_file_path: &PathBuf,
     mut stream: T,
+    flights: &Arc<Flights>,
     client_request_header: &HttpRequestHeader<'_>,
 ) -> ConnectionReturn
 where
@@ -165,6 +190,10 @@ where
             .await
         }
     };
+
+    if flights.is_in_flight(&cache_file_path.to_string_lossy().to_string()).await {
+        return serve_in_flight_file(file, stream, flights, client_request_header).await
+    }
 
     let metadata = match file.metadata().await {
         Ok(m) => m,
