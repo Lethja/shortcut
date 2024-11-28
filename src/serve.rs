@@ -9,7 +9,13 @@ use {
             HttpVersion, BUFFER_SIZE,
         },
     },
-    std::{collections::HashMap, io::SeekFrom, path::PathBuf, sync::Arc, time::Duration},
+    std::{
+        collections::HashMap,
+        io::SeekFrom,
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::Duration,
+    },
     tokio::{
         fs::File,
         io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader},
@@ -29,18 +35,12 @@ where
 {
     let mut client_buf_reader = BufReader::new(&mut stream);
 
-    match timeout(
+    timeout(
         Duration::from_secs(5),
         HttpRequestHeader::from_tcp_buffer_async(&mut client_buf_reader),
     )
     .await
-    {
-        Ok(c) => match c {
-            None => None,
-            Some(header) => Some(header),
-        },
-        Err(_) => None,
-    }
+    .unwrap_or_default()
 }
 
 pub(crate) async fn serve_http_request<T>(
@@ -161,7 +161,7 @@ where
 
 async fn serve_in_flight_file_chunks<T>(
     mut cache_file: File,
-    cache_file_path: &PathBuf,
+    cache_file_path: &Path,
     mut stream: T,
     flights: &Arc<Flights>,
     client_request_header: &HttpRequestHeader<'_>,
@@ -227,7 +227,7 @@ where
 
 async fn serve_in_flight_file_length<T>(
     mut cache_file: File,
-    cache_file_path: &PathBuf,
+    cache_file_path: &Path,
     mut stream: T,
     flights: &Arc<Flights>,
     client_request_header: &HttpRequestHeader<'_>,
@@ -292,7 +292,7 @@ where
 
 async fn serve_in_flight_file<T>(
     cache_file: File,
-    cache_file_path: &PathBuf,
+    cache_file_path: &Path,
     stream: T,
     flights: &Arc<Flights>,
     client_request_header: &HttpRequestHeader<'_>,
@@ -353,7 +353,7 @@ where
         Ok(f) => f,
         Err(_) => {
             return respond_with(
-                keep_alive_if(&client_request_header),
+                keep_alive_if(client_request_header),
                 HttpResponseStatus::INTERNAL_SERVER_ERROR,
                 &mut stream,
             )
@@ -379,7 +379,7 @@ where
         Ok(m) => m,
         Err(_) => {
             return respond_with(
-                keep_alive_if(&client_request_header),
+                keep_alive_if(client_request_header),
                 HttpResponseStatus::INTERNAL_SERVER_ERROR,
                 &mut stream,
             )
@@ -390,7 +390,7 @@ where
     let length = metadata.len();
     if length == 0 {
         return respond_with(
-            keep_alive_if(&client_request_header),
+            keep_alive_if(client_request_header),
             HttpResponseStatus::NO_CONTENT,
             &mut stream,
         )
@@ -438,7 +438,7 @@ where
 
     if end_position <= start_position {
         return respond_with(
-            keep_alive_if(&client_request_header),
+            keep_alive_if(client_request_header),
             HttpResponseStatus::BAD_REQUEST,
             &mut stream,
         )

@@ -124,7 +124,7 @@ async fn listen_for(
     let flights = Arc::clone(flights);
 
     tokio::spawn(async move {
-        let _ = match semaphore.acquire().await {
+        match semaphore.acquire().await {
             Ok(_) => {}
             Err(_) => return,
         };
@@ -140,7 +140,7 @@ async fn listen_for(
                 &flights,
                 client_request,
                 #[cfg(feature = "https")]
-                &*certificates,
+                &certificates,
             )
             .await
             {
@@ -192,7 +192,7 @@ async fn listen_for_https(
             client_request.request = client_request.request.merge_with(&host);
         }
 
-        match serve_http_request(&mut stream, flights, client_request, &*certificates).await {
+        match serve_http_request(&mut stream, flights, client_request, certificates).await {
             Keep => continue,
             _ => return,
         }

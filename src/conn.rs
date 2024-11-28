@@ -54,7 +54,7 @@ impl<'a> From<String> for Uri<'a> {
 
 impl<'a> From<&VecDeque<String>> for Uri<'a> {
     fn from(uris: &VecDeque<String>) -> Self {
-        let mut r = match uris.back().clone() {
+        let mut r = match uris.back() {
             None => return Uri::from("".to_string()),
             Some(r) => Uri::from(r),
         };
@@ -491,9 +491,9 @@ impl Flights {
         }
     }
 
-    pub async fn takeoff(&self, cache_file_path: &String, flight_state: FlightState) {
+    pub async fn takeoff(&self, cache_file_path: &str, flight_state: FlightState) {
         let mut files = self.in_flight.write().await;
-        files.insert(cache_file_path.clone(), flight_state);
+        files.insert(cache_file_path.to_owned(), flight_state);
     }
 
     pub async fn land(&self, cache_file_path: &String) {
@@ -597,7 +597,7 @@ mod tests {
         uris.push_back("http://example.com".to_string());
         uris.push_back("/path/to/resource".to_string());
 
-        let uri = Uri::from(uris);
+        let uri = Uri::from(&uris);
 
         assert_eq!(uri.kind(), ResolvedAddress);
         assert_eq!(uri.scheme, Some("http://"));
@@ -614,7 +614,7 @@ mod tests {
         uris.push_back("/path/to/resource".to_string());
         uris.push_back("http://example.com".to_string());
 
-        let uri = Uri::from(uris);
+        let uri = Uri::from(&uris);
 
         assert_eq!(uri.kind(), ResolvedAddress);
         assert_eq!(uri.scheme, Some("http://"));
@@ -631,7 +631,7 @@ mod tests {
         uris.push_back("http://example.com/foo".to_string());
         uris.push_back("/bar".to_string());
 
-        let uri = Uri::from(uris);
+        let uri = Uri::from(&uris);
 
         assert_eq!(uri.kind(), ResolvedAddress);
         assert_eq!(uri.scheme, Some("http://"));
@@ -648,7 +648,7 @@ mod tests {
         uris.push_back("http://example.com/foo".to_string());
         uris.push_back("https://example.com/foo".to_string());
 
-        let uri = Uri::from(uris);
+        let uri = Uri::from(&uris);
 
         assert_eq!(uri.kind(), ResolvedAddress);
         assert_eq!(uri.scheme, Some("https://"));

@@ -281,12 +281,7 @@ impl HttpRequestHeader<'_> {
         let filter = END_OF_HTTP_HEADER.as_bytes();
 
         while !buffer.ends_with(filter) {
-            if read_header_or_timeout(value, &mut buffer, &mut buffer_size, filter)
-                .await
-                .is_none()
-            {
-                return None;
-            }
+            read_header_or_timeout(value, &mut buffer, &mut buffer_size, filter).await?;
 
             if begin.elapsed() >= Duration::from_secs(60) {
                 return None;
@@ -556,12 +551,7 @@ impl HttpResponseHeader {
         let filter = END_OF_HTTP_HEADER.as_bytes();
 
         while !buffer.ends_with(filter) {
-            if read_header_or_timeout(value, &mut buffer, &mut buffer_size, filter)
-                .await
-                .is_none()
-            {
-                return None;
-            }
+            read_header_or_timeout(value, &mut buffer, &mut buffer_size, filter).await?;
 
             if begin.elapsed() >= Duration::from_secs(10) {
                 return None;

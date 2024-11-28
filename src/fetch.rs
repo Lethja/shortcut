@@ -278,7 +278,7 @@ where
                     if v.to_lowercase() == "chunked" {
                         flights
                             .takeoff(
-                                &cache_file_path.to_string_lossy().to_string(),
+                                cache_file_path.to_string_lossy().as_ref(),
                                 FlightState::Chunks,
                             )
                             .await;
@@ -311,7 +311,7 @@ where
                             Ok(u) => {
                                 flights
                                     .takeoff(
-                                        &cache_file_path.to_string_lossy().to_string(),
+                                        cache_file_path.to_string_lossy().as_ref(),
                                         FlightState::Length(u),
                                     )
                                     .await;
@@ -377,10 +377,10 @@ where
                 };
                 Redirect(String::from(url))
             }
-            x => {
+            _x => {
                 let pass_through = fetch_response_header.generate();
                 debug_print!(
-                    "Proxy will pass-through {x} from server to client\n\
+                    "Proxy will pass-through {_x} from server to client\n\
                  Header as follows:\n\n{pass_through}"
                 );
                 match stream.write_all(pass_through.as_bytes()).await {
