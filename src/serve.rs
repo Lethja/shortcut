@@ -225,8 +225,11 @@ where
                     return Close;
                 }
                 current_position += n as u64;
-                /* Wait a little while to allow warrant enough bytes to send another packet */
-                tokio::time::sleep(Duration::from_millis(30)).await;
+
+                if n < BUFFER_SIZE {
+                    /* Wait a little while to allow warrant enough bytes to send another packet */
+                    tokio::time::sleep(Duration::from_millis(30)).await; /* Nagle's algorithm */
+                }
             }
             Err(_) => return Close,
         }
