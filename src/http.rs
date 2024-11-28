@@ -13,9 +13,9 @@ use tokio::{
     time::{self, timeout, Duration, Instant},
 };
 
-const END_OF_HTTP_HEADER: &str = "\r\n\r\n";
+pub(crate) const END_OF_HTTP_HEADER: &str = "\r\n\r\n";
 
-const END_OF_HTTP_HEADER_LINE: &str = "\r\n";
+pub(crate) const END_OF_HTTP_HEADER_LINE: &str = "\r\n";
 
 pub const X_PROXY_CACHE_PATH: &str = "X_PROXY_CACHE_PATH";
 

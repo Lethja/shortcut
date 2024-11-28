@@ -169,8 +169,60 @@ async fn serve_in_flight_file_chunks<T>(
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    /* TODO: Chunk encoded flight */
-    Close
+    use crate::http::{END_OF_HTTP_HEADER, END_OF_HTTP_HEADER_LINE};
+
+    let status = HttpResponseStatus::OK;
+    let mut headers = HashMap::<String, String>::new();
+    headers.insert(String::from("Transfer-Encoding"), "chunked".to_string());
+
+    let mut header = HttpResponseHeader {
+        status,
+        headers,
+        version: HttpVersion::HTTP_V11,
+    };
+
+    let header = header.generate();
+    if stream.write_all(header.as_bytes()).await.is_err() {
+        return Close;
+    }
+
+    let mut buffer = vec![0; BUFFER_SIZE];
+
+    loop {
+        match cache_file.read(&mut buffer).await {
+            Ok(0) => {
+                /* No new data available, at the moment */
+                if !flights
+                    .is_in_flight(&cache_file_path.to_string_lossy().to_string())
+                    .await
+                {
+                    /* The flight is gone, assume it has finished */
+                    let end_chunk = format!("0{END_OF_HTTP_HEADER}");
+                    return match stream.write_all(end_chunk.as_bytes()).await {
+                        Ok(_) => keep_alive_if(client_request_header),
+                        Err(_) => Close,
+                    };
+                }
+
+                /* Wait a while before retrying */
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Ok(n) => {
+                let chunk = format!("{:X}{END_OF_HTTP_HEADER_LINE}", n);
+                if stream.write_all(chunk.as_bytes()).await.is_err() {
+                    return Close;
+                }
+                if stream.write_all(&buffer[..n]).await.is_err() {
+                    return Close;
+                }
+                if n < BUFFER_SIZE {
+                    /* Wait a little while to allow warrant enough bytes to send another packet */
+                    tokio::time::sleep(Duration::from_millis(30)).await; /* Nagle's algorithm */
+                }
+            }
+            Err(_) => return Close,
+        }
+    }
 }
 
 async fn serve_in_flight_file_length<T>(
