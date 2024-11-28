@@ -4,7 +4,7 @@ use {
         debug_print,
     },
     std::{
-        collections::{HashSet, VecDeque},
+        collections::{HashMap, VecDeque},
         fmt,
         pin::Pin,
     },
@@ -473,20 +473,27 @@ impl FetchRequest<'_> {
     }
 }
 
+#[derive(Clone)]
+pub(crate) enum FlightState {
+    Fetching,
+    Length(u64),
+    Chunks,
+}
+
 pub(crate) struct Flights {
-    in_flight: RwLock<HashSet<String>>,
+    in_flight: RwLock<HashMap<String, FlightState>>,
 }
 
 impl Flights {
     pub fn new() -> Self {
         Flights {
-            in_flight: RwLock::new(HashSet::<String>::new()),
+            in_flight: RwLock::new(HashMap::<String, FlightState>::new()),
         }
     }
 
-    pub async fn takeoff(&self, cache_file_path: &String) {
+    pub async fn takeoff(&self, cache_file_path: &String, flight_state: FlightState) {
         let mut files = self.in_flight.write().await;
-        files.insert(cache_file_path.clone());
+        files.insert(cache_file_path.clone(), flight_state);
     }
 
     pub async fn land(&self, cache_file_path: &String) {
@@ -496,7 +503,12 @@ impl Flights {
 
     pub async fn is_in_flight(&self, cache_file_path: &String) -> bool {
         let files = self.in_flight.read().await;
-        files.contains(cache_file_path)
+        files.contains_key(cache_file_path)
+    }
+
+    pub async fn flight_state(&self, cache_file_path: &String) -> Option<FlightState> {
+        let files = self.in_flight.read().await;
+        files.get(cache_file_path).cloned()
     }
 }
 

@@ -1,6 +1,6 @@
 use {
     crate::{
-        conn::{FetchRequest, Flights, Uri},
+        conn::{FetchRequest, FlightState, Flights, Uri},
         debug_print,
         http::{
             fetch_and_serve_chunk, fetch_and_serve_known_length, keep_alive_if, respond_with,
@@ -24,6 +24,7 @@ use crate::cert::CertificateSetup;
 pub(crate) async fn fetch_and_serve_file<T>(
     cache_file_path: PathBuf,
     mut stream: T,
+    flights: &Arc<Flights>,
     client_request_header: HttpRequestHeader<'_>,
     #[cfg(feature = "https")] certificates: &CertificateSetup,
 ) -> ConnectionReturn
@@ -86,6 +87,7 @@ where
         let fetch_result = fetch(
             &current_uri,
             &cache_file_path,
+            flights,
             &client_request_header,
             &mut fetch_stream,
             &mut stream,
@@ -146,6 +148,7 @@ where
     async fn fetch<R, S>(
         uri: &Uri<'_>,
         cache_file_path: &PathBuf,
+        flights: &Arc<Flights>,
         client_request_header: &HttpRequestHeader<'_>,
         fetch_stream: &mut R,
         mut stream: &mut S,
@@ -273,6 +276,12 @@ where
 
                 if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
                     if v.to_lowercase() == "chunked" {
+                        flights
+                            .takeoff(
+                                &cache_file_path.to_string_lossy().to_string(),
+                                FlightState::Chunks,
+                            )
+                            .await;
                         (write_file, write_stream) = fetch_and_serve_chunk(
                             cache_file_path,
                             &mut stream,
@@ -299,7 +308,15 @@ where
                             .await
                         }
                         Some(s) => match s.parse::<u64>() {
-                            Ok(u) => u,
+                            Ok(u) => {
+                                flights
+                                    .takeoff(
+                                        &cache_file_path.to_string_lossy().to_string(),
+                                        FlightState::Length(u),
+                                    )
+                                    .await;
+                                u
+                            }
                             Err(_) => {
                                 return respond_with(
                                     keep_alive_if(client_request_header),

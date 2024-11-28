@@ -1,7 +1,7 @@
 use {
     crate::{
         conn,
-        conn::Flights,
+        conn::{FlightState, Flights},
         fetch::fetch_and_serve_file,
         http::{
             get_cache_name, keep_alive_if, respond_with, ConnectionReturn, ConnectionReturn::Close,
@@ -106,19 +106,20 @@ where
                     }
                     Some(p) => {
                         let hash = p.to_string_lossy().to_string();
-                        (p,hash)
-                    },
+                        (p, hash)
+                    }
                 };
 
                 if cache_file_path.exists() || flights.is_in_flight(&hash).await {
                     serve_existing_file(&cache_file_path, stream, flights, &client_request_header)
                         .await
                 } else {
-                    flights.takeoff(&hash).await;
+                    flights.takeoff(&hash, FlightState::Fetching).await;
 
                     let r = fetch_and_serve_file(
                         cache_file_path,
                         stream,
+                        flights,
                         client_request_header,
                         #[cfg(feature = "https")]
                         cert,
@@ -158,8 +159,9 @@ where
     }
 }
 
-async fn serve_in_flight_file<T>(
-    cache_file: File,
+async fn serve_in_flight_file_chunks<T>(
+    mut cache_file: File,
+    cache_file_path: &PathBuf,
     mut stream: T,
     flights: &Arc<Flights>,
     client_request_header: &HttpRequestHeader<'_>,
@@ -167,7 +169,120 @@ async fn serve_in_flight_file<T>(
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    todo!("Handle in-flight file serves")
+    /* TODO: Chunk encoded flight */
+    Close
+}
+
+async fn serve_in_flight_file_length<T>(
+    mut cache_file: File,
+    cache_file_path: &PathBuf,
+    mut stream: T,
+    flights: &Arc<Flights>,
+    client_request_header: &HttpRequestHeader<'_>,
+    total_length: u64,
+) -> ConnectionReturn
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    let status = HttpResponseStatus::OK;
+    let mut headers = HashMap::<String, String>::new();
+    headers.insert(String::from("Content-Length"), total_length.to_string());
+
+    let mut header = HttpResponseHeader {
+        status,
+        headers,
+        version: HttpVersion::HTTP_V11,
+    };
+
+    let header = header.generate();
+    if stream.write_all(header.as_bytes()).await.is_err() {
+        return Close;
+    }
+
+    let mut current_position = 0;
+    let mut buffer = vec![0; BUFFER_SIZE];
+
+    loop {
+        if current_position >= total_length {
+            break; /* The transfer is finished */
+        }
+
+        match cache_file.read(&mut buffer).await {
+            Ok(0) => {
+                /* No new data available, at the moment */
+                if !flights
+                    .is_in_flight(&cache_file_path.to_string_lossy().to_string())
+                    .await
+                {
+                    return Close; /* The flight is gone, no other choice but to abort */
+                }
+
+                /* Wait a while before retrying */
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Ok(n) => {
+                if stream.write_all(&buffer[..n]).await.is_err() {
+                    return Close;
+                }
+                current_position += n as u64;
+                /* Wait a little while to allow warrant enough bytes to send another packet */
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+            Err(_) => return Close,
+        }
+    }
+
+    keep_alive_if(client_request_header)
+}
+
+async fn serve_in_flight_file<T>(
+    cache_file: File,
+    cache_file_path: &PathBuf,
+    stream: T,
+    flights: &Arc<Flights>,
+    client_request_header: &HttpRequestHeader<'_>,
+) -> ConnectionReturn
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    loop {
+        match flights
+            .flight_state(&cache_file_path.to_string_lossy().to_string())
+            .await
+        {
+            None => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            Some(f) => match f {
+                FlightState::Fetching => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                FlightState::Length(l) => {
+                    return serve_in_flight_file_length(
+                        cache_file,
+                        cache_file_path,
+                        stream,
+                        flights,
+                        client_request_header,
+                        l,
+                    )
+                    .await
+                }
+                FlightState::Chunks => {
+                    return serve_in_flight_file_chunks(
+                        cache_file,
+                        cache_file_path,
+                        stream,
+                        flights,
+                        client_request_header,
+                    )
+                    .await
+                }
+            },
+        }
+    }
 }
 
 async fn serve_existing_file<T>(
@@ -191,8 +306,18 @@ where
         }
     };
 
-    if flights.is_in_flight(&cache_file_path.to_string_lossy().to_string()).await {
-        return serve_in_flight_file(file, stream, flights, client_request_header).await
+    if flights
+        .is_in_flight(&cache_file_path.to_string_lossy().to_string())
+        .await
+    {
+        return serve_in_flight_file(
+            file,
+            cache_file_path,
+            stream,
+            flights,
+            client_request_header,
+        )
+        .await;
     }
 
     let metadata = match file.metadata().await {
