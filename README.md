@@ -46,5 +46,5 @@ rproxy will default to listening for any address on port `3142`.
 - `X_PROXY_HTTP_LISTEN_ADDRESS="[::1]:8080"`
 
 ## Caveats
-- Does not handle https yet.
-- Cached content never expires. If the rproxy cache disk drive has low free disk space, you will need to manually delete files.
+Cached content never expires.
+If the rproxy cache disk has low free disk space, you will need to manually delete files.
