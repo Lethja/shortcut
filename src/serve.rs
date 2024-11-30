@@ -5,12 +5,11 @@ use {
         fetch::fetch_and_serve_file,
         http::{
             get_cache_name, keep_alive_if, respond_with, ConnectionReturn, ConnectionReturn::Close,
-            HttpRequestHeader, HttpRequestMethod, HttpResponseHeader, HttpResponseStatus,
-            HttpVersion, BUFFER_SIZE,
+            HttpHeader, HttpRequestHeader, HttpRequestMethod, HttpResponseHeader,
+            HttpResponseStatus, HttpVersion, BUFFER_SIZE,
         },
     },
     std::{
-        collections::HashMap,
         io::SeekFrom,
         path::{Path, PathBuf},
         sync::Arc,
@@ -172,7 +171,7 @@ where
     use crate::http::{END_OF_HTTP_HEADER, END_OF_HTTP_HEADER_LINE};
 
     let status = HttpResponseStatus::OK;
-    let mut headers = HashMap::<String, String>::new();
+    let mut headers = HttpHeader::new();
     headers.insert(String::from("Transfer-Encoding"), "chunked".to_string());
 
     let mut header = HttpResponseHeader {
@@ -237,7 +236,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let status = HttpResponseStatus::OK;
-    let mut headers = HashMap::<String, String>::new();
+    let mut headers = HttpHeader::new();
     headers.insert(String::from("Content-Length"), total_length.to_string());
 
     let mut header = HttpResponseHeader {
@@ -401,7 +400,7 @@ where
     let mut end_position: u64 = length - 1;
 
     let mut status = HttpResponseStatus::OK;
-    let mut headers = HashMap::<String, String>::new();
+    let mut headers = HttpHeader::new();
     headers.insert(String::from("Content-Length"), metadata.len().to_string());
 
     match client_request_header.headers.get("Range") {

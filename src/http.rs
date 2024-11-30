@@ -159,11 +159,70 @@ pub(crate) fn keep_alive_if(header: &HttpRequestHeader) -> ConnectionReturn {
     }
 }
 
+#[derive(Clone)]
+pub struct HttpHeader {
+    pub header: HashMap<String, (String, String)>,
+}
+
+impl Default for HttpHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HttpHeader {
+    pub fn new() -> Self {
+        HttpHeader {
+            header: HashMap::new(),
+        }
+    }
+
+    pub fn contains_key(&mut self, k: &str) -> bool {
+        let key = k.to_uppercase();
+        self.header.contains_key(&key)
+    }
+
+    pub fn insert(&mut self, k: String, v: String) {
+        let key = k.to_uppercase();
+        self.header.insert(key, (k, v));
+    }
+
+    pub fn get(&self, k: &str) -> Option<&String> {
+        let key = k.to_uppercase();
+        match self.header.get(&key) {
+            None => None,
+            Some((_, x)) => Some(x),
+        }
+    }
+
+    pub fn get_all(&self, k: &str) -> Option<&(String, String)> {
+        let key = k.to_uppercase();
+        self.header.get(&key)
+    }
+
+    pub fn remove(&mut self, k: &str) {
+        let key = k.to_uppercase();
+        self.header.remove(&key);
+    }
+}
+
+impl<'a> IntoIterator for &'a HttpHeader {
+    type Item = (&'a String, &'a String);
+    type IntoIter = std::iter::Map<
+        std::collections::hash_map::Values<'a, String, (String, String)>,
+        fn(&'a (String, String)) -> (&'a String, &'a String),
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.header.values().map(|(key, value)| (key, value))
+    }
+}
+
 pub struct HttpRequestHeader<'a> {
     pub method: HttpRequestMethod,
     pub request: Uri<'a>,
     pub version: HttpVersion,
-    pub headers: HashMap<String, String>,
+    pub headers: HttpHeader,
 }
 
 fn get_mandatory_http_request_header_line(
@@ -507,13 +566,13 @@ impl HttpResponseStatus {
 
 pub struct HttpResponseHeader {
     pub status: HttpResponseStatus,
-    pub headers: HashMap<String, String>,
+    pub headers: HttpHeader,
     #[allow(dead_code)]
     pub version: HttpVersion,
 }
 
-fn get_http_headers(lines: &[String]) -> HashMap<String, String> {
-    let mut headers = HashMap::<String, String>::new();
+fn get_http_headers(lines: &[String]) -> HttpHeader {
+    let mut headers = HttpHeader::new();
 
     for line in lines.iter().skip(1) {
         let mut header = line.splitn(2, ':');
@@ -873,5 +932,65 @@ where
     match stream.write_all(r.as_bytes()).await {
         Ok(_) => return_type,
         Err(_) => Close,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_http_header_table_case_insensitive() {
+        let mut header = HttpHeader::new();
+
+        // Test insert and get with original casing
+        header.insert("Content-Type".to_string(), "text/html".to_string());
+        assert_eq!(header.get("Content-Type"), Some(&"text/html".to_string()));
+
+        // Test get with different casing
+        assert_eq!(header.get("content-type"), Some(&"text/html".to_string()));
+        assert_eq!(header.get("CONTENT-TYPE"), Some(&"text/html".to_string()));
+
+        // Test contains_key with different casings
+        assert!(header.contains_key("Content-Type"));
+        assert!(header.contains_key("content-type"));
+        assert!(header.contains_key("CONTENT-TYPE"));
+
+        // Test get_all returns originally inserted key
+        match header.get_all("CONTENT-TYPE") {
+            Some((original_key, value)) => {
+                assert_eq!(original_key, "Content-Type");
+                assert_eq!(value, "text/html");
+            }
+            None => panic!("Expected to find header with original key"),
+        }
+
+        // Test remove key
+        header.remove("content-type");
+        assert_eq!(header.get("Content-Type"), None);
+    }
+
+    #[test]
+    fn test_http_header_iterator() {
+        let mut header = HttpHeader::new();
+
+        let expected_headers = vec![
+            ("Content-Type".to_string(), "text/html".to_string()),
+            ("User-Agent".to_string(), "RustTest".to_string()),
+            ("Accept-Encoding".to_string(), "gzip, deflate".to_string()),
+        ];
+
+        for (key, value) in &expected_headers {
+            header.insert(key.clone(), value.clone());
+        }
+
+        for (key, value) in &header {
+            match (key.as_str(), value.as_str()) {
+                ("Content-Type", "text/html") | ("User-Agent", "RustTest") | ("Accept-Encoding", "gzip, deflate") => {
+                    continue;
+                }
+                _ => assert!(false, "Unknown headers")
+            }
+        }
     }
 }
