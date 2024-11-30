@@ -666,15 +666,14 @@ pub(crate) async fn fetch_and_serve_known_length<T, R>(
     mut content_length: u64,
     mut fetch_buf_reader: R,
     file: &mut File,
+    mut write_file: bool,
+    mut write_stream: bool,
 ) -> (bool, bool)
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
     R: AsyncBufRead + Unpin,
 {
     let mut buffer = vec![0; BUFFER_SIZE];
-
-    let mut write_file = true;
-    let mut write_stream = true;
 
     loop {
         if content_length == 0 {
@@ -745,6 +744,8 @@ pub(crate) async fn fetch_and_serve_chunk<T, R>(
     stream: &mut T,
     fetch_buf_reader: &mut BufReader<R>,
     file: &mut File,
+    mut write_file: bool,
+    mut write_stream: bool,
 ) -> (bool, bool)
 where
     T: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -810,9 +811,6 @@ where
 
     let filter_line = END_OF_HTTP_HEADER_LINE.as_bytes();
     let mut buffer = vec![0; BUFFER_SIZE];
-
-    let mut write_file = true;
-    let mut write_stream = true;
 
     let mut content_length = match get_http_chunk(fetch_buf_reader, true).await {
         Some(mut s) => {

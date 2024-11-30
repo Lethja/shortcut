@@ -272,7 +272,7 @@ where
                     Err(_) => return Close, /* Something broke */
                 }
 
-                let (write_stream, write_file);
+                let (mut write_file, mut write_stream) = fetch_cache_policy(&fetch_response_header);
 
                 if let Some(v) = fetch_response_header.headers.get("Transfer-Encoding") {
                     if v.to_lowercase() == "chunked" {
@@ -287,6 +287,8 @@ where
                             &mut stream,
                             &mut fetch_buf_reader,
                             &mut file,
+                            write_file,
+                            write_stream,
                         )
                         .await
                     } else {
@@ -334,6 +336,8 @@ where
                         content_length,
                         &mut fetch_buf_reader,
                         &mut file,
+                        write_file,
+                        write_stream,
                     )
                     .await;
                 }
@@ -361,7 +365,17 @@ where
                     let _ = remove_file(cache_file_path).await;
                     return Close; /* Something has gone wrong mid-transmission */
                 }
-                keep_alive_if(client_request_header) /* Next request ready */
+                return keep_alive_if(client_request_header); /* Next request ready */
+
+                fn fetch_cache_policy(response_header: &HttpResponseHeader) -> (bool, bool) {
+                    match response_header.headers.get("Cache-Control") {
+                        None => (true, true),
+                        Some(v) => match v.to_lowercase().as_str() {
+                            "no-store" | "private" => (false, true),
+                            _ => (true, true),
+                        },
+                    }
+                }
             }
             301..303 | 307..308 => {
                 let url = match fetch_response_header.headers.get("Location") {
