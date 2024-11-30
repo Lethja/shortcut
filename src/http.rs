@@ -984,10 +984,12 @@ mod tests {
 
         for (key, value) in &header {
             match (key.as_str(), value.as_str()) {
-                ("Content-Type", "text/html") | ("User-Agent", "RustTest") | ("Accept-Encoding", "gzip, deflate") => {
+                ("Content-Type", "text/html")
+                | ("User-Agent", "RustTest")
+                | ("Accept-Encoding", "gzip, deflate") => {
                     continue;
                 }
-                _ => assert!(false, "Unknown headers")
+                _ => unreachable!("Unknown headers"),
             }
         }
     }
