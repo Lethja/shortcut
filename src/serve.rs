@@ -76,8 +76,18 @@ where
                             }
                         }
                     }
+                    #[cfg(feature = "https")]
                     _ => {
                         return respond_with(
+                            keep_alive_if(&client_request_header),
+                            HttpResponseStatus::NO_CONTENT,
+                            &mut stream,
+                        )
+                        .await
+                    }
+                    #[cfg(not(feature = "https"))]
+                    _ => {
+                        respond_with(
                             keep_alive_if(&client_request_header),
                             HttpResponseStatus::NO_CONTENT,
                             &mut stream,
