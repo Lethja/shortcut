@@ -9,9 +9,15 @@ Any later requests for the same file by other devices will be served from the lo
 saving bandwidth and potentially allowing for faster downloads.
 
 ## Building
-rproxy is a typical Cargo project. Building it is as simple as:
+rproxy is a typical Cargo project.
+
+Building is as simple as:
 ```sh
 cargo build --release
+```
+To build with HTTPS support:
+```sh
+cargo build --features https --release
 ```
 The binary will be built in `target/release/rproxy`.
 
