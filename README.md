@@ -51,6 +51,15 @@ rproxy will default to listening for any address on port `3142`.
 - `X_PROXY_HTTP_LISTEN_ADDRESS="127.0.0.1:8080"`
 - `X_PROXY_HTTP_LISTEN_ADDRESS="[::1]:8080"`
 
+### Testing with wget
+To test that the proxy is working on the same machine with `wget` run the following command twice
+```
+http_proxy=http://127.0.0.1:3142 https_proxy=https://127.0.0.1:3142 wget --no-check-certificate https://github.com/Lethja/rproxy/archive/refs/heads/master.zip
+```
+> Using `--no-check-certificate` to test the proxy is safe in this case
+since `127.0.0.1` is a loopback address to the same machine.\
+rproxy will still verify `github.com`s certificate when it makes the request.
+
 ## Caveats
 Cached content never expires.
 If the rproxy cache disk has low free disk space, you will need to manually delete files.
