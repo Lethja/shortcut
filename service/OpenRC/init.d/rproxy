@@ -1,0 +1,45 @@
+#!/sbin/openrc-run
+
+name="rproxy"
+description="rproxy file caching service"
+command="/opt/bin/rproxy"
+pidfile="/run/rproxy.pid"
+log_file="/var/log/rproxy.log"
+
+depend() {
+    need net
+    use logger
+}
+
+start_pre() {
+    # Check for the mandatory environment variable
+    if [ -z "${X_PROXY_CACHE_PATH}" ]; then
+        eerror "Environment variable X_PROXY_CACHE_PATH is not set"
+        return 1
+    fi
+    checkpath --directory --owner ${RPROXY_COMMAND_USER}:${RPROXY_COMMAND_GROUP} ${X_PROXY_CACHE_PATH}
+    checkpath --file --owner ${RPROXY_COMMAND_USER}:${RPROXY_COMMAND_GROUP} ${log_file}
+}
+
+start() {
+    ebegin "Starting ${name}"
+
+    export X_PROXY_CACHE_PATH="${X_PROXY_CACHE_PATH}"
+
+    start-stop-daemon --start --exec ${command} \
+                      --user ${RPROXY_COMMAND_USER} \
+                      --group ${RPROXY_COMMAND_GROUP} \
+                      --pidfile ${pidfile} \
+                      --make-pidfile \
+                      --background \
+                      --stdout ${log_file} \
+                      --stderr ${log_file} \
+                      ${command_args}
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping ${name}"
+    start-stop-daemon --stop --pidfile ${pidfile}
+    eend $?
+}
