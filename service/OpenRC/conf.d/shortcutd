@@ -1,13 +1,13 @@
-# Set this to the user you want rproxy to run as.
+# Set this to the user you want Shortcut to run as.
 # It is recommended to use something other than root.
-RPROXY_COMMAND_USER="1000"
+SHORTCUT_COMMAND_USER="1000"
 
-# Set this to the group you want rproxy to run as.
+# Set this to the group you want Shortcut to run as.
 # Usually set the same as the user.
 # It is recommended to use something other than root.
-RPROXY_COMMAND_GROUP="1000"
+SHORTCUT_COMMAND_GROUP="1000"
 
-# Set the directory rproxy should use for storing files.
+# Set the directory Shortcut should use for storing files.
 # This directory should be somewhere where the user/group has write permissions.
 # It is ideal to use a local internal drive with high write endurance and plenty of space (2TB+ mechanical drive)
-X_PROXY_CACHE_PATH=/tmp/rproxy
+X_PROXY_CACHE_PATH=/tmp/shortcut

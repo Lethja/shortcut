@@ -1,5 +1,5 @@
 [package]
-name = "rproxy"
+name = "shortcut"
 version = "0.1.6"
 edition = "2018"
 publish = false
