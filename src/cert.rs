@@ -195,9 +195,68 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
         }
     }
 
+    //TODO: test windows version
     #[cfg(windows)]
     fn set_read_only(path: &PathBuf) {
-        todo!("Windows file permission nonsense")
+        use std::os::windows::prelude::*;
+        use windows_acl::{acl::ACL, helper::sid::Sid};
+        use windows_acl::acl::{AceType, AccessMode};
+
+        let owner = match Sid::current_user() {
+            Ok(sid) => sid,
+            Err(e) => {
+                eprintln!("Failed to get current user SID: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let everyone = match Sid::everyone() {
+            Ok(sid) => sid,
+            Err(e) => {
+                eprintln!("Failed to get Everyone SID: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let mut acl = match ACL::from_file_path(path) {
+            Ok(acl) => acl,
+            Err(e) => {
+                eprintln!("Failed to get ACL for file: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        if let Err(e) = acl.clear() {
+            eprintln!("Failed to clear ACL: {}", e);
+            std::process::exit(1);
+        }
+
+        // Give the owner read and delete access only
+        if let Err(e) = acl.add_entry(
+            owner.as_sid(),
+            AceType::AccessAllow,
+            AccessMode::Read | AccessMode::Delete,
+            None,
+        ) {
+            eprintln!("Failed to set owner permissions: {}", e);
+            std::process::exit(1);
+        }
+
+        // Explicitly deny all access to everyone else
+        if let Err(e) = acl.add_entry(
+            everyone.as_sid(),
+            AceType::AccessDeny,
+            AccessMode::FullControl,
+            None,
+        ) {
+            eprintln!("Failed to deny everyone permissions: {}", e);
+            std::process::exit(1);
+        }
+
+        if let Err(e) = acl.write_file_path(path) {
+            eprintln!("Failed to write ACL to file: {}", e);
+            std::process::exit(1);
+        }
     }
 
     let path = match std::env::var(X_PROXY_TLS_PATH) {

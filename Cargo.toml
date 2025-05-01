@@ -1,18 +1,18 @@
 [package]
 name = "shortcut"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2018"
 publish = false
 
 [features]
-default = []
 https = [
     "pnet",
     "pnet_datalink",
     "rcgen",
     "rustls",
     "rustls-native-certs",
-    "tokio-rustls"
+    "tokio-rustls",
+    "windows-acl"
 ]
 
 [dependencies.httpdate]
@@ -22,30 +22,30 @@ default-features = false
 [dependencies.pnet]
 default-features = false
 optional = true
-version = "0.35.0"
+version = "0.35"
 features = ["std"]
 
 [dependencies.pnet_datalink]
 default-features = false
 optional = true
-version = "0.35.0"
+version = "0.35"
 
 [dependencies.rcgen]
 default-features = false
 optional = true
-version = "0.13.1"
+version = "0.13"
 features = ["crypto", "pem", "ring"]
 
 [dependencies.rustls]
 default-features = false
 features = ["ring", "tls12"]
 optional = true
-version = "0.23.16"
+version = "0.23"
 
 [dependencies.rustls-native-certs]
 default-features = false
 optional = true
-version = "0.8.0"
+version = "0.8"
 
 [dependencies.tokio]
 version = "1"
@@ -63,7 +63,12 @@ features = [
 [dependencies.tokio-rustls]
 default-features = false
 features = ["ring"]
-version = "0.26.0"
+version = "0.26"
+optional = true
+
+# Platform specific dependencies
+[target.'cfg(windows)'.dependencies.windows-acl]
+version = "0.3"
 optional = true
 
 [profile.release]

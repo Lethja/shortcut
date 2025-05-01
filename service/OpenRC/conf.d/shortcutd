@@ -9,5 +9,6 @@ SHORTCUT_COMMAND_GROUP="1000"
 
 # Set the directory Shortcut should use for storing files.
 # This directory should be somewhere where the user/group has write permissions.
-# It is ideal to use a local internal drive with high write endurance and plenty of space (2TB+ mechanical drive)
+# It is ideal to use a local internal drive with high write endurance and plenty of space
+# such as a 2TB+ mechanical drive or enterprise grade solid state drive.
 X_PROXY_CACHE_PATH=/tmp/shortcut
