@@ -1,0 +1,21 @@
+[Unit]
+Description=Shortcut file caching web-proxy
+After=network.target
+
+[Service]
+StateDirectory=shortcutd
+Environment=X_PROXY_CACHE_PATH=%S/shortcutd
+ReadWritePaths=%S/shortcutd
+
+Type=simple
+DynamicUser=yes
+ExecStart=/opt/bin/shortcutd
+StandardOutput=append:/var/log/shortcutd.log
+StandardError=append:/var/log/shortcutd.log
+ProtectSystem=strict
+Restart=on-abnormal
+RestartSec=5
+RuntimeDirectory=shortcutd
+
+[Install]
+WantedBy=multi-user.target
