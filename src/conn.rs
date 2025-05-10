@@ -102,6 +102,16 @@ impl<'a> Uri<'a> {
 
         let uri_ref: *mut Uri<'a> = &mut uri;
         unsafe {
+            // This unsafe block is necessary to update the string references
+            // within the Uri struct to point to slices of the uri field.
+            // A raw pointer is used to convince the borrow checker that we're not
+            // simultaneously borrowing uri mutably (to modify its fields)
+            // and immutably (to create the string slices).
+            // This is safe because:
+            // 1. The pointer is created from a valid reference
+            // 2. We only use it once to call update_references
+            // 3. The slices created live as long as the struct itself
+
             (*uri_ref).update_references();
         }
         uri
