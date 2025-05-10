@@ -304,8 +304,6 @@ enum StreamType {
     Unencrypted(TcpStream),
     #[cfg(feature = "https")]
     TlsClient(client::TlsStream<TcpStream>),
-    //#[cfg(feature = "https")]
-    //TlsServer(server::TlsStream<TcpStream>),
 }
 
 pub(crate) struct FetchRequest<'a> {
