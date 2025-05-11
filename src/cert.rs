@@ -1,6 +1,5 @@
 use {
     crate::{http::X_PROXY_CACHE_PATH, PKG_NAME},
-    pnet::datalink,
     rcgen::{generate_simple_self_signed, CertifiedKey},
     rustls::{
         pki_types::pem::PemObject,
@@ -298,14 +297,15 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
 
     subject_alt_names.push("*.local".to_string());
 
-    let interfaces = datalink::interfaces();
+    // Get interfaces and their IPs
+    let interfaces = get_if_addrs::get_if_addrs().unwrap();
 
     for interface in interfaces {
-        for ip in interface.ips {
-            if let IpAddr::V4(ipv4_addr) = ip.ip() {
-                if ipv4_addr.is_private() {
-                    subject_alt_names.push(ipv4_addr.to_string());
-                }
+        let address = interface.addr;
+        // Check if it's an IPv4 address
+        if let IpAddr::V4(ipv4_addr) = address.ip() {
+            if ipv4_addr.is_private() {
+                subject_alt_names.push(ipv4_addr.to_string());
             }
         }
     }

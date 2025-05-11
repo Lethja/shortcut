@@ -6,8 +6,7 @@ publish = false
 
 [features]
 https = [
-    "pnet",
-    "pnet_datalink",
+    "get_if_addrs",
     "rcgen",
     "rustls",
     "rustls-native-certs",
@@ -19,16 +18,9 @@ https = [
 version = "1"
 default-features = false
 
-[dependencies.pnet]
-default-features = false
+[dependencies.get_if_addrs]
+version = "0.5.3"
 optional = true
-version = "0.35"
-features = ["std"]
-
-[dependencies.pnet_datalink]
-default-features = false
-optional = true
-version = "0.35"
 
 [dependencies.rcgen]
 default-features = false
