@@ -194,14 +194,28 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
         }
     }
 
-    //TODO: test windows version
     #[cfg(windows)]
     fn set_read_only(path: &PathBuf) {
-        use std::os::windows::prelude::*;
-        use windows_acl::{acl::ACL, helper::sid::Sid};
-        use windows_acl::acl::{AceType, AccessMode};
+        use {
+            winapi::{shared::minwindef::BYTE, um::winnt::PSID},
+            windows_acl::{
+                acl::{AceType, ACL},
+                helper,
+            },
+        };
 
-        let owner = match Sid::current_user() {
+        const FILE_GENERIC_READ_AND_DELETE: u32 = 0x120089;
+        const GENERIC_ALL: u32 = 0x10000000;
+
+        let username = match std::env::var("USERNAME") {
+            Ok(name) => name,
+            Err(e) => {
+                eprintln!("Failed to get current username: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let owner = match helper::name_to_sid(&username, None) {
             Ok(sid) => sid,
             Err(e) => {
                 eprintln!("Failed to get current user SID: {}", e);
@@ -209,7 +223,7 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
             }
         };
 
-        let everyone = match Sid::everyone() {
+        let everyone = match helper::string_to_sid("S-1-1-0") {
             Ok(sid) => sid,
             Err(e) => {
                 eprintln!("Failed to get Everyone SID: {}", e);
@@ -217,7 +231,7 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
             }
         };
 
-        let mut acl = match ACL::from_file_path(path) {
+        let mut acl = match ACL::from_file_path(path.to_str().unwrap(), false) {
             Ok(acl) => acl,
             Err(e) => {
                 eprintln!("Failed to get ACL for file: {}", e);
@@ -225,17 +239,12 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
             }
         };
 
-        if let Err(e) = acl.clear() {
-            eprintln!("Failed to clear ACL: {}", e);
-            std::process::exit(1);
-        }
-
         // Give the owner read and delete access only
         if let Err(e) = acl.add_entry(
-            owner.as_sid(),
+            owner.as_ptr() as PSID,
             AceType::AccessAllow,
-            AccessMode::Read | AccessMode::Delete,
-            None,
+            FILE_GENERIC_READ_AND_DELETE as BYTE,
+            0,
         ) {
             eprintln!("Failed to set owner permissions: {}", e);
             std::process::exit(1);
@@ -243,17 +252,12 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
 
         // Explicitly deny all access to everyone else
         if let Err(e) = acl.add_entry(
-            everyone.as_sid(),
+            everyone.as_ptr() as PSID,
             AceType::AccessDeny,
-            AccessMode::FullControl,
-            None,
+            GENERIC_ALL as BYTE,
+            0,
         ) {
             eprintln!("Failed to deny everyone permissions: {}", e);
-            std::process::exit(1);
-        }
-
-        if let Err(e) = acl.write_file_path(path) {
-            eprintln!("Failed to write ACL to file: {}", e);
             std::process::exit(1);
         }
     }

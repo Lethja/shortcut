@@ -11,6 +11,7 @@ https = [
     "rustls",
     "rustls-native-certs",
     "tokio-rustls",
+    "winapi",
     "windows-acl"
 ]
 
@@ -59,6 +60,12 @@ version = "0.26"
 optional = true
 
 # Platform specific dependencies
+[target.'cfg(windows)'.dependencies.winapi]
+version = "0.3.9"
+optional = true
+default-features = false
+features = ["minwindef", "winnt"]
+
 [target.'cfg(windows)'.dependencies.windows-acl]
 version = "0.3"
 optional = true
