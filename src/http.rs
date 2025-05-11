@@ -378,10 +378,7 @@ impl HttpRequestHeader<'_> {
     }
 
     pub(crate) fn generate(&self) -> Option<String> {
-        let path = match self.request.path_and_query {
-            None => return None,
-            Some(p) => p,
-        };
+        let path = self.request.path_and_query?;
 
         let mut str = assemble_mandatory_http_request_header_line(
             self.method.to_string().as_str(),
@@ -941,7 +938,7 @@ mod tests {
     fn test_http_header_table_case_insensitive() {
         let mut header = HttpHeader::new();
 
-        // Test insert and get with original casing
+        // Test insert and get with the original casing
         header.insert("Content-Type".to_string(), "text/html".to_string());
         assert_eq!(header.get("Content-Type"), Some(&"text/html".to_string()));
 
@@ -954,7 +951,7 @@ mod tests {
         assert!(header.contains_key("content-type"));
         assert!(header.contains_key("CONTENT-TYPE"));
 
-        // Test get_all returns originally inserted key
+        // Test get_all returns the originally inserted key
         match header.get_all("CONTENT-TYPE") {
             Some((original_key, value)) => {
                 assert_eq!(original_key, "Content-Type");

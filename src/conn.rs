@@ -18,7 +18,6 @@ use {
 #[cfg(feature = "https")]
 use {std::convert::TryFrom, tokio_rustls::client};
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct Uri<'a> {
     pub(crate) uri: String,
@@ -46,13 +45,13 @@ pub(crate) enum UriKind {
     Invalid,
 }
 
-impl<'a> From<String> for Uri<'a> {
+impl From<String> for Uri<'_> {
     fn from(uri: String) -> Self {
         Uri::new(uri)
     }
 }
 
-impl<'a> From<&VecDeque<String>> for Uri<'a> {
+impl From<&VecDeque<String>> for Uri<'_> {
     fn from(uris: &VecDeque<String>) -> Self {
         let mut r = match uris.back() {
             None => return Uri::from("".to_string()),
@@ -76,13 +75,13 @@ impl<'a> From<&VecDeque<String>> for Uri<'a> {
     }
 }
 
-impl<'a> From<&String> for Uri<'a> {
+impl From<&String> for Uri<'_> {
     fn from(uri: &String) -> Self {
         Uri::new(uri.clone())
     }
 }
 
-impl<'a> From<&Uri<'_>> for Uri<'a> {
+impl From<&Uri<'_>> for Uri<'_> {
     fn from(uri: &Uri) -> Self {
         Uri::new(uri.uri.clone())
     }
