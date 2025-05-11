@@ -11,8 +11,7 @@ https = [
     "rustls",
     "rustls-native-certs",
     "tokio-rustls",
-    "winapi",
-    "windows-acl"
+    "winapi"
 ]
 
 [dependencies.httpdate]
@@ -62,13 +61,9 @@ optional = true
 # Platform specific dependencies
 [target.'cfg(windows)'.dependencies.winapi]
 version = "0.3.9"
+features = ["accctrl", "aclapi", "minwindef", "ntdef", "winbase", "winnt", "winerror"]
 optional = true
 default-features = false
-features = ["minwindef", "winnt"]
-
-[target.'cfg(windows)'.dependencies.windows-acl]
-version = "0.3"
-optional = true
 
 [profile.release]
 debug = false

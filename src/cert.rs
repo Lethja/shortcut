@@ -197,69 +197,101 @@ fn check_or_create_tls() -> (PathBuf, PathBuf) {
     #[cfg(windows)]
     fn set_read_only(path: &PathBuf) {
         use {
-            winapi::{shared::minwindef::BYTE, um::winnt::PSID},
-            windows_acl::{
-                acl::{AceType, ACL},
-                helper,
+            std::{
+                ffi::OsStr, iter::once, os::windows::ffi::OsStrExt, process::exit, ptr::null_mut,
+            },
+            winapi::{
+                ctypes::c_void,
+                shared::winerror::ERROR_SUCCESS,
+                um::{
+                    accctrl::{
+                        EXPLICIT_ACCESS_W, NO_INHERITANCE, SE_FILE_OBJECT, TRUSTEE_IS_SID,
+                        TRUSTEE_IS_USER, TRUSTEE_W,
+                    },
+                    aclapi::{GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW},
+                    winbase::LocalFree,
+                    winnt::{
+                        DACL_SECURITY_INFORMATION, DELETE, FILE_GENERIC_READ,
+                        OWNER_SECURITY_INFORMATION, PACL, PROTECTED_DACL_SECURITY_INFORMATION,
+                        PSECURITY_DESCRIPTOR, PSID,
+                    },
+                },
             },
         };
 
-        const FILE_GENERIC_READ_AND_DELETE: u32 = 0x120089;
-        const GENERIC_ALL: u32 = 0x10000000;
+        let path: Vec<u16> = OsStr::new(path).encode_wide().chain(once(0)).collect();
+        let mut p_owner_sid: PSID = null_mut();
+        let mut p_sd: PSECURITY_DESCRIPTOR = null_mut();
+        let mut p_new_dacl: PACL = null_mut();
 
-        let username = match std::env::var("USERNAME") {
-            Ok(name) => name,
-            Err(e) => {
-                eprintln!("Failed to get current username: {}", e);
-                std::process::exit(1);
+        let cleanup = move || unsafe {
+            if !&p_sd.is_null() {
+                LocalFree(p_sd as *mut c_void);
+            }
+            if !&p_new_dacl.is_null() {
+                LocalFree(p_new_dacl as *mut c_void);
             }
         };
 
-        let owner = match helper::name_to_sid(&username, None) {
-            Ok(sid) => sid,
-            Err(e) => {
-                eprintln!("Failed to get current user SID: {}", e);
-                std::process::exit(1);
-            }
+        let result = unsafe {
+            GetNamedSecurityInfoW(
+                path.as_ptr(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &mut p_owner_sid,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut p_sd,
+            )
         };
 
-        let everyone = match helper::string_to_sid("S-1-1-0") {
-            Ok(sid) => sid,
-            Err(e) => {
-                eprintln!("Failed to get Everyone SID: {}", e);
-                std::process::exit(1);
-            }
-        };
-
-        let mut acl = match ACL::from_file_path(path.to_str().unwrap(), false) {
-            Ok(acl) => acl,
-            Err(e) => {
-                eprintln!("Failed to get ACL for file: {}", e);
-                std::process::exit(1);
-            }
-        };
-
-        // Give the owner read and delete access only
-        if let Err(e) = acl.add_entry(
-            owner.as_ptr() as PSID,
-            AceType::AccessAllow,
-            FILE_GENERIC_READ_AND_DELETE as BYTE,
-            0,
-        ) {
-            eprintln!("Failed to set owner permissions: {}", e);
-            std::process::exit(1);
+        if result != ERROR_SUCCESS {
+            cleanup();
+            eprintln!("Failed to set owner permissions: {}", result);
+            exit(1);
         }
 
-        // Explicitly deny all access to everyone else
-        if let Err(e) = acl.add_entry(
-            everyone.as_ptr() as PSID,
-            AceType::AccessDeny,
-            GENERIC_ALL as BYTE,
-            0,
-        ) {
-            eprintln!("Failed to deny everyone permissions: {}", e);
-            std::process::exit(1);
+        let mut ea = EXPLICIT_ACCESS_W {
+            grfAccessPermissions: FILE_GENERIC_READ | DELETE,
+            grfAccessMode: winapi::um::accctrl::SET_ACCESS,
+            grfInheritance: NO_INHERITANCE,
+            Trustee: TRUSTEE_W {
+                pMultipleTrustee: null_mut(),
+                MultipleTrusteeOperation: winapi::um::accctrl::NO_MULTIPLE_TRUSTEE,
+                TrusteeForm: TRUSTEE_IS_SID,
+                TrusteeType: TRUSTEE_IS_USER,
+                ptstrName: p_owner_sid as *mut _,
+            },
+        };
+
+        let result = unsafe { SetEntriesInAclW(1, &mut ea, null_mut(), &mut p_new_dacl) };
+
+        if result != ERROR_SUCCESS {
+            cleanup();
+            eprintln!("Failed to set owner permissions: {}", result);
+            exit(1);
         }
+
+        let result = unsafe {
+            SetNamedSecurityInfoW(
+                path.as_ptr() as *mut _,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                p_new_dacl,
+                null_mut(),
+            )
+        };
+
+        if result != ERROR_SUCCESS {
+            cleanup();
+            eprintln!("Failed to set ACL: {}", result);
+            exit(1);
+        }
+
+        cleanup();
     }
 
     let path = match std::env::var(X_PROXY_TLS_PATH) {
