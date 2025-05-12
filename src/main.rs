@@ -164,15 +164,55 @@ async fn listen_for_https(
         return;
     };
 
-    let acceptor = certificates.server_config.clone();
+    use {rustls::server::Acceptor, tokio_rustls::LazyConfigAcceptor};
 
-    let mut stream = match acceptor.accept(stream).await {
-        Ok(s) => s,
+    let acceptor = LazyConfigAcceptor::new(Acceptor::default(), stream);
+    tokio::pin!(acceptor);
+
+    let (mut stream, sni) = match acceptor.as_mut().await {
+        Ok(start) => {
+            let sni = start.client_hello().server_name().map(|x| x.to_string());
+
+            match sni {
+                Some(sni) => {
+                    // TODO: replace with dynamic certificate based on sni.
+                    match start
+                        .into_stream(certificates.server_config.config().clone())
+                        .await
+                    {
+                        Ok(stream) => (stream, Some(sni)),
+                        Err(e) => {
+                            eprintln!("{PKG_NAME} couldn't create tls stream: {e}");
+                            return;
+                        }
+                    }
+                }
+                None => {
+                    match start
+                        .into_stream(certificates.server_config.config().clone())
+                        .await
+                    {
+                        Ok(stream) => (stream, None),
+                        Err(e) => {
+                            eprintln!("{PKG_NAME} couldn't create tls stream: {e}");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         Err(e) => {
             eprintln!("{PKG_NAME} couldn't create tls stream: {e}");
             return;
         }
     };
+
+    if let Some(sni) = sni {
+        if host != sni {
+            eprintln!("{PKG_NAME} aborted https request: SNI ({sni}) mismatched request ({host})");
+            return; // TODO: add a HTTP error about SNI differing from host
+        }
+    }
 
     host.insert_str(0, "https://");
     debug_print!("Connect request to {} is being established", host);
