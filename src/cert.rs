@@ -131,6 +131,46 @@ fn load_system_certificates() -> Arc<TlsConnector> {
     Arc::new(TlsConnector::from(config))
 }
 
+#[allow(dead_code)]
+fn create_dynamic_server_config(
+    domain: &str,
+    cert_path: &PathBuf,
+    key_path: &PathBuf,
+) -> Result<ServerConfig, Box<dyn std::error::Error>> {
+    use rcgen::{CertificateParams, DistinguishedName, KeyPair};
+
+    let proxy_cert = CertificateDer::from_pem_file(cert_path)?;
+    let proxy_key = PrivateKeyDer::from_pem_file(key_path)?;
+
+    // Create parameters for the new certificate
+    let mut params = CertificateParams::new(vec![domain.to_string()])?;
+
+    params
+        .key_usages
+        .push(rcgen::KeyUsagePurpose::DigitalSignature);
+    params
+        .extended_key_usages
+        .push(rcgen::ExtendedKeyUsagePurpose::ServerAuth);
+    params
+        .extended_key_usages
+        .push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
+    params.distinguished_name = {
+        let mut dn = DistinguishedName::new();
+        dn.push(rcgen::DnType::CommonName, domain);
+        dn
+    };
+
+    let key_pair = KeyPair::generate()?;
+
+    todo!("Sign key with proxy key/cert");
+
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![proxy_cert], proxy_key.clone_key())?;
+
+    Ok(config)
+}
+
 fn load_server_certificates(cert_path: &PathBuf, key_path: &PathBuf) -> Arc<TlsAcceptor> {
     let cert = match CertificateDer::from_pem_file(cert_path) {
         Ok(c) => c,
