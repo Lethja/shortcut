@@ -2,7 +2,6 @@ use {
     crate::{http::X_PROXY_CACHE_PATH, PKG_NAME},
     rcgen::CertifiedKey,
     rustls::{
-        pki_types::pem::PemObject,
         pki_types::{CertificateDer, PrivateKeyDer},
         ClientConfig, RootCertStore, ServerConfig,
     },
@@ -19,6 +18,7 @@ pub(crate) struct CertificateSetup {
     pub(crate) client_config: Arc<TlsConnector>,
     pub(crate) server_config: Arc<TlsAcceptor>,
     pub(crate) server_cert_path: PathBuf,
+    pub(crate) cert_path: PathBuf,
     pub(crate) certificate: CertifiedKey,
 }
 
@@ -135,13 +135,16 @@ fn load_system_certificates() -> Arc<TlsConnector> {
 #[allow(dead_code)]
 fn create_dynamic_server_config(
     domain: &str,
-    cert_path: &PathBuf,
-    key_path: &PathBuf,
+    certificate_setup: &CertificateSetup
 ) -> Result<ServerConfig, Box<dyn std::error::Error>> {
     use rcgen::{CertificateParams, DistinguishedName, KeyPair};
 
+    todo!("Refactor to use 'certificate' and 'cert_path' members");
+
+    /*
     let proxy_cert = CertificateDer::from_pem_file(cert_path)?;
     let proxy_key = PrivateKeyDer::from_pem_file(key_path)?;
+     */
 
     // Create parameters for the new certificate
     let mut params = CertificateParams::new(vec![domain.to_string()])?;
@@ -165,11 +168,13 @@ fn create_dynamic_server_config(
 
     todo!("Sign key with proxy key/cert");
 
+    /*
     let config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![proxy_cert], proxy_key.clone_key())?;
 
     Ok(config)
+     */
 }
 
 fn load_server_certificates(cert: &CertifiedKey) -> Arc<TlsAcceptor> {
@@ -193,7 +198,7 @@ fn load_server_certificates(cert: &CertifiedKey) -> Arc<TlsAcceptor> {
     Arc::new(TlsAcceptor::from(config))
 }
 
-fn check_or_create_tls() -> (CertifiedKey, PathBuf) {
+fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
     #[cfg(unix)]
     fn set_read_only(path: &PathBuf) {
         match std::fs::metadata(path) {
@@ -321,14 +326,34 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf) {
             path
         }
         Err(_) => {
-            let p = match std::env::var(X_PROXY_CACHE_PATH) {
-                Ok(p) => p,
+            match std::env::var(X_PROXY_CACHE_PATH) {
+                Ok(p) => {
+                    let mut path = PathBuf::from(p);
+                    if !path.is_dir() {
+                        eprintln!(
+                            "Path '{}' should be a directory",
+                            &path.to_str().unwrap_or("?")
+                        );
+                        std::process::exit(1);
+                    }
+                    path = path.join("https");
+                    match std::fs::create_dir(&path) {
+                        Ok(_) => {}
+                        Err(e) => match e.kind() {
+                            std::io::ErrorKind::AlreadyExists => {}
+                            _ => {
+                                eprintln!("{e}");
+                                std::process::exit(1);
+                            }
+                        },
+                    };
+                    path
+                }
                 Err(e) => {
                     eprintln!("{e}");
                     std::process::exit(1);
                 }
-            };
-            PathBuf::from(p)
+            }
         }
     };
 
@@ -378,7 +403,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf) {
 
         let cert = param.self_signed(&key_pair).unwrap();
 
-        return (CertifiedKey { cert, key_pair }, cert_path);
+        return (CertifiedKey { cert, key_pair }, path, cert_path);
     }
 
     let mut param = CertificateParams::default();
@@ -426,7 +451,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf) {
         CERT_QUERY
     );
 
-    (root_key, cert_path)
+    (root_key, path, cert_path)
 }
 
 pub(crate) fn setup_certificates() -> CertificateSetup {
@@ -438,13 +463,14 @@ pub(crate) fn setup_certificates() -> CertificateSetup {
 
     #[cfg(not(debug_assertions))]
     let client_config = load_system_certificates();
-    let (certificate, server_cert_path) = check_or_create_tls();
+    let (certificate, cert_path, server_cert_path) = check_or_create_tls();
     let server_config = load_server_certificates(&certificate);
 
     CertificateSetup {
         client_config,
         server_config,
         server_cert_path,
+        cert_path,
         certificate,
     }
 }
