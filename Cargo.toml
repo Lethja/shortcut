@@ -26,7 +26,7 @@ optional = true
 default-features = false
 optional = true
 version = "0.13"
-features = ["crypto", "pem", "ring"]
+features = ["crypto", "pem", "ring", "x509-parser"]
 
 [dependencies.rustls]
 default-features = false
