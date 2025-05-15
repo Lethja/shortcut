@@ -1,5 +1,5 @@
 use {
-    crate::{http::X_PROXY_CACHE_PATH, PKG_NAME},
+    crate::{http::X_PROXY_ROOT_PATH, PKG_NAME},
     rcgen::CertifiedKey,
     rustls::{
         pki_types::{CertificateDer, PrivateKeyDer},
@@ -10,7 +10,7 @@ use {
     tokio_rustls::{TlsAcceptor, TlsConnector},
 };
 
-pub const X_PROXY_TLS_PATH: &str = "X_PROXY_TLS_PATH";
+pub const X_PROXY_HTTPS_PATH: &str = "X_PROXY_HTTPS_PATH";
 
 pub const CERT_QUERY: &str = "?cert";
 
@@ -135,7 +135,7 @@ fn load_system_certificates() -> Arc<TlsConnector> {
 #[allow(dead_code)]
 fn create_dynamic_server_config(
     domain: &str,
-    certificate_setup: &CertificateSetup
+    certificate_setup: &CertificateSetup,
 ) -> Result<ServerConfig, Box<dyn std::error::Error>> {
     use rcgen::{CertificateParams, DistinguishedName, KeyPair};
 
@@ -313,48 +313,36 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
         cleanup();
     }
 
-    let path = match std::env::var(X_PROXY_TLS_PATH) {
+    let path = match std::env::var(X_PROXY_HTTPS_PATH) {
         Ok(p) => {
             let path = PathBuf::from(&p);
             if !path.is_dir() {
-                eprintln!(
-                    "{PKG_NAME} X_PROXY_TLS_PATH ({}) should be set to a directory",
-                    p
-                );
+                eprintln!("{PKG_NAME} {X_PROXY_HTTPS_PATH} ({}) is not a directory", p);
                 std::process::exit(1);
             }
             path
         }
-        Err(_) => {
-            match std::env::var(X_PROXY_CACHE_PATH) {
-                Ok(p) => {
-                    let mut path = PathBuf::from(p);
-                    if !path.is_dir() {
-                        eprintln!(
-                            "Path '{}' should be a directory",
-                            &path.to_str().unwrap_or("?")
-                        );
-                        std::process::exit(1);
-                    }
-                    path = path.join("https");
-                    match std::fs::create_dir(&path) {
-                        Ok(_) => {}
-                        Err(e) => match e.kind() {
-                            std::io::ErrorKind::AlreadyExists => {}
-                            _ => {
-                                eprintln!("{e}");
-                                std::process::exit(1);
-                            }
-                        },
-                    };
-                    path
-                }
-                Err(e) => {
-                    eprintln!("{e}");
-                    std::process::exit(1);
-                }
+        Err(_) => match std::env::var(X_PROXY_ROOT_PATH) {
+            Ok(p) => {
+                let path = PathBuf::from(p).join("https");
+                match std::fs::create_dir(&path) {
+                    Ok(_) => {}
+                    Err(e) => match e.kind() {
+                        std::io::ErrorKind::AlreadyExists => {}
+                        _ => {
+                            eprintln!("{e}");
+                            std::process::exit(1);
+                        }
+                    },
+                };
+                std::env::set_var(X_PROXY_HTTPS_PATH, &path);
+                path
             }
-        }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
     };
 
     let cert_path = path.join("cert.pem");

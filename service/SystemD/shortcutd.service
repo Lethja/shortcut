@@ -1,10 +1,32 @@
+# To edit how this service run `systemctl edit shortcutd` and modify the following to your liking...
+
+# Environment=X_PROXY_ROOT_PATH=/tmp/shortcut X_PROXY_CACHE_PATH=/tmp/shortcut/cache X_PROXY_HTTPS_PATH=/tmp/shortcut/https
+# ReadWritePaths=/tmp/shortcut /tmp/shortcut/cache /tmp/shortcut/https
+
+# X_PROXY_ROOT_PATH will set the root directory Shortcut should use its permanent storage.
+# This directory should be somewhere where the user/group has write permissions.
+# It is ideal to use a local internal drive with high write endurance and plenty of space
+# such as a 2TB+ mechanical drive or enterprise grade solid state drive.
+# If X_PROXY_CACHE_PATH and/or X_PROXY_HTTPS_PATH are not set
+# then they will have their respective paths created as subdirectories here.
+
+# X_PROXY_CACHE_PATH will set the directory Shortcut should use for storing downloaded files.
+# This directory should be somewhere where the user/group has write permissions.
+# It is ideal to use a local internal drive with high write endurance and plenty of space
+# such as a 2TB+ mechanical drive or enterprise grade solid state drive.
+
+# X_PROXY_HTTPS_PATH will set the directory Shortcut should use for storing it's certificates and keys for HTTPS proxy service.
+# This directory should be somewhere where the user/group has write permissions.
+# Keys and certificates will be marked with 0400 user permissions after creation
+# to prevent leaks to other system users. Keep this in mind with you want to delete or move them later.
+
 [Unit]
 Description=Shortcut file caching web-proxy
 After=network.target
 
 [Service]
 StateDirectory=shortcutd
-Environment=X_PROXY_CACHE_PATH=%S/shortcutd
+Environment=X_PROXY_ROOT_PATH=%S/shortcutd
 ReadWritePaths=%S/shortcutd
 
 Type=simple

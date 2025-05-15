@@ -19,7 +19,7 @@ use {
 use {
     crate::{
         conn::Flights,
-        http::{ConnectionReturn::Keep, X_PROXY_CACHE_PATH},
+        http::{ConnectionReturn::Keep, X_PROXY_CACHE_PATH, X_PROXY_ROOT_PATH},
         serve::{read_http_request, serve_http_request},
     },
     std::{path::PathBuf, sync::Arc},
@@ -40,16 +40,40 @@ async fn main() {
             let path = PathBuf::from(&s);
             if !path.exists() {
                 if let Err(e) = create_dir_all(&path).await {
-                    eprintln!("Error: couldn't create directory '{s}': {e}");
+                    eprintln!(
+                        "Error: couldn't create directory '{}': {e}",
+                        &path.to_str().unwrap_or("?")
+                    );
                     return;
                 }
+                eprintln!("{PKG_NAME} new cache path: {s}");
             }
             eprintln!("{PKG_NAME} cache path: {s}");
         }
-        Err(_) => {
-            eprintln!("Error: '{X_PROXY_CACHE_PATH}' has not been set");
-            return;
-        }
+        Err(_) => match std::env::var(X_PROXY_ROOT_PATH) {
+            Ok(s) => {
+                let path = PathBuf::from(&s).join("cache");
+                if !path.exists() {
+                    if let Err(e) = create_dir_all(&path).await {
+                        eprintln!(
+                            "Error: couldn't create directory '{}': {e}",
+                            &path.to_str().unwrap_or("?")
+                        );
+                        return;
+                    }
+                    eprintln!(
+                        "{PKG_NAME} new cache path: {}",
+                        &path.to_str().unwrap_or("?")
+                    );
+                    std::env::set_var(X_PROXY_CACHE_PATH, &path);
+                }
+                eprintln!("{PKG_NAME} cache path: {}", &path.to_str().unwrap_or("?"));
+            }
+            Err(_) => {
+                eprintln!("Error: '{X_PROXY_ROOT_PATH}' has not been set");
+                return;
+            }
+        },
     };
 
     #[cfg(feature = "https")]

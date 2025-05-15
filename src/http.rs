@@ -17,6 +17,8 @@ pub(crate) const END_OF_HTTP_HEADER: &str = "\r\n\r\n";
 
 pub(crate) const END_OF_HTTP_HEADER_LINE: &str = "\r\n";
 
+pub const X_PROXY_ROOT_PATH: &str = "X_PROXY_ROOT_PATH";
+
 pub const X_PROXY_CACHE_PATH: &str = "X_PROXY_CACHE_PATH";
 
 /* 16 KiB will occupy half of l1d on a typical x86_64 core */
