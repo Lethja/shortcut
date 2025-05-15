@@ -330,7 +330,10 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
                     Err(e) => match e.kind() {
                         std::io::ErrorKind::AlreadyExists => {}
                         _ => {
-                            eprintln!("{e}");
+                            eprintln!(
+                                "Error: couldn't create directory '{}': {e}",
+                                &path.to_str().unwrap_or("?")
+                            );
                             std::process::exit(1);
                         }
                     },
@@ -339,7 +342,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
                 path
             }
             Err(e) => {
-                eprintln!("{e}");
+                eprintln!("Error: '{X_PROXY_ROOT_PATH}' or '{X_PROXY_HTTPS_PATH}' has to be set to a directory to continue");
                 std::process::exit(1);
             }
         },
@@ -351,11 +354,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
     use rcgen::{CertificateParams, KeyPair};
 
     if cert_path.exists() && key_path.exists() {
-        eprintln!(
-            "{PKG_NAME} using server https cert '{}' and key '{}'",
-            cert_path.to_str().unwrap_or("?"),
-            key_path.to_str().unwrap_or("?")
-        );
+        eprintln!("{PKG_NAME} https path '{}'", path.to_str().unwrap_or("?"));
 
         let param = match std::fs::read_to_string(&cert_path) {
             Ok(x) => x,
@@ -432,17 +431,14 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
         }
     }
 
-    eprintln!(
-        "{PKG_NAME} generated key and self-signed certificate in '{}'. \
-        This certificate can be downloaded from the servers '/{}' path",
-        String::from(path.to_str().unwrap()),
-        CERT_QUERY
-    );
+    eprintln!("{PKG_NAME} new https path '{}'. The new self-signed certificate can be downloaded from the servers '/{}' path", path.to_str().unwrap_or("?"), CERT_QUERY);
 
     (root_key, path, cert_path)
 }
 
 pub(crate) fn setup_certificates() -> CertificateSetup {
+    let (certificate, cert_path, server_cert_path) = check_or_create_tls();
+
     #[cfg(debug_assertions)]
     let client_config = match std::env::var("X_PROXY_CERT_GOSPEL") {
         Ok(_) => treat_certificates_as_gospel(),
@@ -451,7 +447,7 @@ pub(crate) fn setup_certificates() -> CertificateSetup {
 
     #[cfg(not(debug_assertions))]
     let client_config = load_system_certificates();
-    let (certificate, cert_path, server_cert_path) = check_or_create_tls();
+
     let server_config = load_server_certificates(&certificate);
 
     CertificateSetup {

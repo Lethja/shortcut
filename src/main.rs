@@ -23,7 +23,7 @@ use {
         serve::{read_http_request, serve_http_request},
     },
     std::{path::PathBuf, sync::Arc},
-    tokio::{fs::create_dir_all, net::TcpListener, sync::Semaphore},
+    tokio::{net::TcpListener, sync::Semaphore},
 };
 
 pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -39,38 +39,41 @@ async fn main() {
         Ok(s) => {
             let path = PathBuf::from(&s);
             if !path.exists() {
-                if let Err(e) = create_dir_all(&path).await {
-                    eprintln!(
-                        "Error: couldn't create directory '{}': {e}",
-                        &path.to_str().unwrap_or("?")
-                    );
-                    return;
-                }
-                eprintln!("{PKG_NAME} new cache path: {s}");
+                eprintln!(
+                    "{PKG_NAME} {X_PROXY_CACHE_PATH} ({}) is not a directory",
+                    path.to_str().unwrap_or("?")
+                );
+                return;
             }
             eprintln!("{PKG_NAME} cache path: {s}");
         }
         Err(_) => match std::env::var(X_PROXY_ROOT_PATH) {
             Ok(s) => {
                 let path = PathBuf::from(&s).join("cache");
-                if !path.exists() {
-                    if let Err(e) = create_dir_all(&path).await {
+                match std::fs::create_dir(&path) {
+                    Ok(_) => {
                         eprintln!(
-                            "Error: couldn't create directory '{}': {e}",
+                            "{PKG_NAME} new cache path: {}",
                             &path.to_str().unwrap_or("?")
                         );
-                        return;
                     }
-                    eprintln!(
-                        "{PKG_NAME} new cache path: {}",
-                        &path.to_str().unwrap_or("?")
-                    );
-                    std::env::set_var(X_PROXY_CACHE_PATH, &path);
+                    Err(e) => match e.kind() {
+                        std::io::ErrorKind::AlreadyExists => {
+                            eprintln!("{PKG_NAME} cache path: {}", &path.to_str().unwrap_or("?"));
+                        }
+                        _ => {
+                            eprintln!(
+                                "Error: couldn't create directory '{}': {e}",
+                                &path.to_str().unwrap_or("?")
+                            );
+                            std::process::exit(1);
+                        }
+                    },
                 }
-                eprintln!("{PKG_NAME} cache path: {}", &path.to_str().unwrap_or("?"));
+                std::env::set_var(X_PROXY_CACHE_PATH, &path);
             }
             Err(_) => {
-                eprintln!("Error: '{X_PROXY_ROOT_PATH}' has not been set");
+                eprintln!("Error: '{X_PROXY_ROOT_PATH}' or '{X_PROXY_CACHE_PATH}' has to be set to a directory to continue");
                 return;
             }
         },
