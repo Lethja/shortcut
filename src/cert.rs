@@ -136,15 +136,8 @@ fn load_system_certificates() -> Arc<TlsConnector> {
 fn create_dynamic_server_config(
     domain: &str,
     certificate_setup: &CertificateSetup,
-) -> Result<ServerConfig, Box<dyn std::error::Error>> {
+) -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
     use rcgen::{CertificateParams, DistinguishedName, KeyPair};
-
-    todo!("Refactor to use 'certificate' and 'cert_path' members");
-
-    /*
-    let proxy_cert = CertificateDer::from_pem_file(cert_path)?;
-    let proxy_key = PrivateKeyDer::from_pem_file(key_path)?;
-     */
 
     // Create parameters for the new certificate
     let mut params = CertificateParams::new(vec![domain.to_string()])?;
@@ -166,15 +159,9 @@ fn create_dynamic_server_config(
 
     let key_pair = KeyPair::generate()?;
 
-    todo!("Sign key with proxy key/cert");
+    let cert = params.signed_by(&key_pair, &certificate_setup.certificate.cert, &certificate_setup.certificate.key_pair)?;
 
-    /*
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(vec![proxy_cert], proxy_key.clone_key())?;
-
-    Ok(config)
-     */
+    Ok((cert.der().to_vec(), key_pair.serialize_der()))
 }
 
 fn load_server_certificates(cert: &CertifiedKey) -> Arc<TlsAcceptor> {
@@ -341,7 +328,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
                 std::env::set_var(X_PROXY_HTTPS_PATH, &path);
                 path
             }
-            Err(e) => {
+            Err(_) => {
                 eprintln!("Error: '{X_PROXY_ROOT_PATH}' or '{X_PROXY_HTTPS_PATH}' has to be set to a directory to continue");
                 std::process::exit(1);
             }
