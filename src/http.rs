@@ -106,7 +106,7 @@ impl std::fmt::Display for HttpRequestMethod {
             HttpRequestMethod::Trace => write!(f, "TRACE"),
             HttpRequestMethod::Connect => write!(f, "CONNECT"),
             HttpRequestMethod::Patch => write!(f, "PATCH"),
-            HttpRequestMethod::Custom(s) => write!(f, "{}", s),
+            HttpRequestMethod::Custom(s) => write!(f, "{s}"),
         }
     }
 }

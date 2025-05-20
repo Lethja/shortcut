@@ -217,7 +217,7 @@ where
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             Ok(n) => {
-                let chunk = format!("{:X}{END_OF_HTTP_HEADER_LINE}", n);
+                let chunk = format!("{n:X}{END_OF_HTTP_HEADER_LINE}");
                 if stream.write_all(chunk.as_bytes()).await.is_err() {
                     return Close;
                 }

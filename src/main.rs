@@ -100,7 +100,7 @@ async fn main() {
             }
             #[cfg(not(feature = "https"))]
             {
-                eprintln!("{PKG_NAME} HTTP listen address: {}", address);
+                eprintln!("{PKG_NAME} HTTP listen address: {address}");
                 eprintln!("{PKG_NAME} HTTP listen port: {}", details.port());
             }
             l

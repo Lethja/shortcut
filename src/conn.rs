@@ -186,12 +186,9 @@ impl<'a> Uri<'a> {
             "{}{}{}{}{}",
             scheme.unwrap_or_default(),
             host.unwrap_or_default(),
-            port.as_ref().map(|p| format!(":{}", p)).unwrap_or_default(),
+            port.as_ref().map(|p| format!(":{p}")).unwrap_or_default(),
             path.unwrap_or_default(),
-            query
-                .as_ref()
-                .map(|q| format!("?{}", q))
-                .unwrap_or_default()
+            query.as_ref().map(|q| format!("?{q}")).unwrap_or_default()
         );
         Uri::from(uri)
     }
@@ -261,10 +258,7 @@ impl<'a> Uri<'a> {
 
             match value[start..end].find(':') {
                 None => scheme_to_port(value),
-                Some(p) => match value[p + start + 1..end].parse::<u16>() {
-                    Ok(p) => Some(p),
-                    Err(_) => None,
-                },
+                Some(p) => value[p + start + 1..end].parse::<u16>().ok(),
             }
         }
 
@@ -338,7 +332,7 @@ impl fmt::Display for FetchRequestError {
             InvalidUri => write!(f, "Invalid Uri"),
             #[cfg(feature = "https")]
             InvalidDomainName(name) => write!(f, "Invalid domain name: {}", name),
-            TcpConnectionError(msg) => write!(f, "TCP connection error: {}", msg),
+            TcpConnectionError(msg) => write!(f, "TCP connection error: {msg}"),
             #[cfg(feature = "https")]
             TlsConnectionError(msg) => write!(f, "TLS connection error: {}", msg),
         }

@@ -14,6 +14,7 @@ pub const X_PROXY_HTTPS_PATH: &str = "X_PROXY_HTTPS_PATH";
 
 pub const CERT_QUERY: &str = "?cert";
 
+#[allow(dead_code)]
 pub(crate) struct CertificateSetup {
     pub(crate) client_config: Arc<TlsConnector>,
     pub(crate) server_config: Arc<TlsAcceptor>,
@@ -159,7 +160,11 @@ fn create_dynamic_server_config(
 
     let key_pair = KeyPair::generate()?;
 
-    let cert = params.signed_by(&key_pair, &certificate_setup.certificate.cert, &certificate_setup.certificate.key_pair)?;
+    let cert = params.signed_by(
+        &key_pair,
+        &certificate_setup.certificate.cert,
+        &certificate_setup.certificate.key_pair,
+    )?;
 
     Ok((cert.der().to_vec(), key_pair.serialize_der()))
 }
