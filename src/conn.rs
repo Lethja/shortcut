@@ -306,7 +306,7 @@ enum StreamType {
     Disconnected,
     Unencrypted(TcpStream),
     #[cfg(feature = "https")]
-    TlsClient(client::TlsStream<TcpStream>),
+    TlsClient(Box<client::TlsStream<TcpStream>>),
 }
 
 pub(crate) struct FetchRequest<'a> {
@@ -331,10 +331,10 @@ impl fmt::Display for FetchRequestError {
             InvalidScheme => write!(f, "Uri had no scheme"),
             InvalidUri => write!(f, "Invalid Uri"),
             #[cfg(feature = "https")]
-            InvalidDomainName(name) => write!(f, "Invalid domain name: {}", name),
+            InvalidDomainName(name) => write!(f, "Invalid domain name: {name}"),
             TcpConnectionError(msg) => write!(f, "TCP connection error: {msg}"),
             #[cfg(feature = "https")]
-            TlsConnectionError(msg) => write!(f, "TLS connection error: {}", msg),
+            TlsConnectionError(msg) => write!(f, "TLS connection error: {msg}"),
         }
     }
 }
@@ -355,7 +355,7 @@ impl FetchRequest<'_> {
         Ok(FetchRequest { uri, stream })
     }
 
-    pub(crate) fn uri(&self) -> &Uri {
+    pub(crate) fn uri(&self) -> &Uri<'_> {
         &self.uri
     }
 
@@ -405,7 +405,7 @@ impl FetchRequest<'_> {
 
                 let stream: StreamType =
                     match certificates.client_config.connect(domain, stream).await {
-                        Ok(s) => TlsClient(s),
+                        Ok(s) => TlsClient(Box::new(s)),
                         Err(e) => {
                             return {
                                 debug_print!("HTTPS connect error '{e}'");
@@ -444,7 +444,7 @@ impl FetchRequest<'_> {
                 Err(InvalidUri)
             }
             false => {
-                debug_print!("{} is not same as host {}", self.uri.uri, other.uri);
+                debug_print!("{} is different from host {}", self.uri.uri, other.uri);
                 self.uri = Uri::from(other);
                 match self
                     .connect(

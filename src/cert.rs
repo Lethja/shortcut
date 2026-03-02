@@ -112,7 +112,7 @@ fn load_system_certificates() -> Arc<TlsConnector> {
     let certs = load_native_certs();
 
     for error in certs.errors {
-        eprintln!("{PKG_NAME} couldn't load a system certificate: {}", error);
+        eprintln!("{PKG_NAME} couldn't load a system certificate: {error}");
     }
 
     for cert in certs.certs {
@@ -309,7 +309,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
         Ok(p) => {
             let path = PathBuf::from(&p);
             if !path.is_dir() {
-                eprintln!("{PKG_NAME} {X_PROXY_HTTPS_PATH} ({}) is not a directory", p);
+                eprintln!("{PKG_NAME} {X_PROXY_HTTPS_PATH} ({p}) is not a directory");
                 std::process::exit(1);
             }
             path
