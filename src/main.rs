@@ -6,16 +6,6 @@ mod fetch;
 mod http;
 mod serve;
 
-#[cfg(feature = "https")]
-use {
-    crate::{
-        cert::{setup_certificates, CertificateSetup},
-        conn::{Uri, UriKind::*},
-        http::{respond_with, ConnectionReturn, ConnectionReturn::Upgrade, HttpResponseStatus},
-    },
-    tokio::net::TcpStream,
-};
-
 use {
     crate::{
         conn::Flights,
@@ -24,6 +14,16 @@ use {
     },
     std::{path::PathBuf, sync::Arc},
     tokio::{net::TcpListener, sync::Semaphore},
+};
+
+#[cfg(feature = "https")]
+use {
+    crate::{
+        cert::{setup_certificates, CertificateSetup},
+        conn::{Uri, UriKind::*},
+        http::{respond_with, ConnectionReturn, ConnectionReturn::Upgrade, HttpResponseStatus},
+    },
+    tokio::net::TcpStream,
 };
 
 pub(crate) const PKG_NAME: &str = env!("CARGO_PKG_NAME");
