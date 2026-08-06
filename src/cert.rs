@@ -1,8 +1,8 @@
 use {
     crate::{http::X_PROXY_ROOT_PATH, PKG_NAME},
-    rcgen::CertifiedKey,
+    rcgen::KeyPair,
     rustls::{
-        pki_types::{CertificateDer, PrivateKeyDer},
+        pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
         ClientConfig, RootCertStore, ServerConfig,
     },
     rustls_native_certs::load_native_certs,
@@ -14,13 +14,19 @@ pub const X_PROXY_HTTPS_PATH: &str = "X_PROXY_HTTPS_PATH";
 
 pub const CERT_QUERY: &str = "?cert";
 
+pub(crate) struct RootCertificate {
+    cert_der: CertificateDer<'static>,
+    cert_pem: String,
+    signing_key: KeyPair,
+}
+
 #[allow(dead_code)]
 pub(crate) struct CertificateSetup {
     pub(crate) client_config: Arc<TlsConnector>,
     pub(crate) server_config: Arc<TlsAcceptor>,
     pub(crate) server_cert_path: PathBuf,
     pub(crate) cert_path: PathBuf,
-    pub(crate) certificate: CertifiedKey,
+    pub(crate) certificate: RootCertificate,
 }
 
 #[cfg(debug_assertions)]
@@ -138,7 +144,7 @@ fn create_dynamic_server_config(
     domain: &str,
     certificate_setup: &CertificateSetup,
 ) -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
-    use rcgen::{CertificateParams, DistinguishedName, KeyPair};
+    use rcgen::{CertificateParams, DistinguishedName, Issuer, KeyPair};
 
     // Create parameters for the new certificate
     let mut params = CertificateParams::new(vec![domain.to_string()])?;
@@ -159,24 +165,24 @@ fn create_dynamic_server_config(
     };
 
     let key_pair = KeyPair::generate()?;
-
-    let cert = params.signed_by(
-        &key_pair,
-        &certificate_setup.certificate.cert,
-        &certificate_setup.certificate.key_pair,
+    let issuer = Issuer::from_ca_cert_pem(
+        certificate_setup.certificate.cert_pem.as_str(),
+        &certificate_setup.certificate.signing_key,
     )?;
+
+    let cert = params.signed_by(&key_pair, &issuer)?;
 
     Ok((cert.der().to_vec(), key_pair.serialize_der()))
 }
 
-fn load_server_certificates(cert: &CertifiedKey) -> Arc<TlsAcceptor> {
+fn load_server_certificates(cert: &RootCertificate) -> Arc<TlsAcceptor> {
     use rustls::pki_types::PrivatePkcs8KeyDer;
 
     let config = match ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(
-            vec![cert.cert.der().clone()],
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der())),
+            vec![cert.cert_der.clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())),
         ) {
         Ok(x) => x,
         Err(e) => {
@@ -190,7 +196,7 @@ fn load_server_certificates(cert: &CertifiedKey) -> Arc<TlsAcceptor> {
     Arc::new(TlsAcceptor::from(config))
 }
 
-fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
+fn check_or_create_tls() -> (RootCertificate, PathBuf, PathBuf) {
     #[cfg(unix)]
     fn set_read_only(path: &PathBuf) {
         match std::fs::metadata(path) {
@@ -343,12 +349,12 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
     let cert_path = path.join("cert.pem");
     let key_path = path.join("priv.key");
 
-    use rcgen::{CertificateParams, KeyPair};
+    use rcgen::{CertificateParams, Issuer, KeyPair};
 
     if cert_path.exists() && key_path.exists() {
         eprintln!("{PKG_NAME} https path '{}'", path.to_str().unwrap_or("?"));
 
-        let param = match std::fs::read_to_string(&cert_path) {
+        let cert_pem = match std::fs::read_to_string(&cert_path) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("{e}");
@@ -356,7 +362,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
             }
         };
 
-        let param = match CertificateParams::from_ca_cert_pem(param.as_str()) {
+        let signing_key_pem = match std::fs::read_to_string(&key_path) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("{e}");
@@ -364,15 +370,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
             }
         };
 
-        let key_pair = match std::fs::read_to_string(&key_path) {
-            Ok(x) => x.to_string(),
-            Err(e) => {
-                eprintln!("{e}");
-                std::process::exit(1);
-            }
-        };
-
-        let key_pair = match KeyPair::from_pem(key_pair.as_str()) {
+        let signing_key = match KeyPair::from_pem(signing_key_pem.as_str()) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("{e}");
@@ -380,9 +378,28 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
             }
         };
 
-        let cert = param.self_signed(&key_pair).unwrap();
+        if let Err(e) = Issuer::from_ca_cert_pem(cert_pem.as_str(), &signing_key) {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
 
-        return (CertifiedKey { cert, key_pair }, path, cert_path);
+        let cert_der = match CertificateDer::from_pem_slice(cert_pem.as_bytes()) {
+            Ok(x) => x,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        };
+
+        return (
+            RootCertificate {
+                cert_der,
+                cert_pem,
+                signing_key,
+            },
+            path,
+            cert_path,
+        );
     }
 
     let mut param = CertificateParams::default();
@@ -398,12 +415,13 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
     ];
     param.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
 
-    let key_pair = KeyPair::generate().unwrap();
-    let cert = param.self_signed(&key_pair).unwrap();
+    let signing_key = KeyPair::generate().unwrap();
+    let cert = param.self_signed(&signing_key).unwrap();
 
-    let root_key = CertifiedKey { cert, key_pair };
+    let cert_der = cert.der().clone();
+    let cert_pem = cert.pem();
 
-    match std::fs::write(&cert_path, root_key.cert.pem()) {
+    match std::fs::write(&cert_path, cert_pem.as_str()) {
         Ok(_) => {
             set_read_only(&cert_path);
         }
@@ -413,7 +431,7 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
         }
     }
 
-    match std::fs::write(&key_path, root_key.key_pair.serialize_pem()) {
+    match std::fs::write(&key_path, signing_key.serialize_pem()) {
         Ok(_) => {
             set_read_only(&key_path);
         }
@@ -425,7 +443,15 @@ fn check_or_create_tls() -> (CertifiedKey, PathBuf, PathBuf) {
 
     eprintln!("{PKG_NAME} new https path '{}'. The new self-signed certificate can be downloaded from the servers '/{}' path", path.to_str().unwrap_or("?"), CERT_QUERY);
 
-    (root_key, path, cert_path)
+    (
+        RootCertificate {
+            cert_der,
+            cert_pem,
+            signing_key,
+        },
+        path,
+        cert_path,
+    )
 }
 
 pub(crate) fn setup_certificates() -> CertificateSetup {
