@@ -54,17 +54,17 @@ async fn main() {
                     Ok(_) => {
                         eprintln!(
                             "{PKG_NAME} new cache path: {}",
-                            &path.to_str().unwrap_or("?")
+                            path.to_str().unwrap_or("?")
                         );
                     }
                     Err(e) => match e.kind() {
                         std::io::ErrorKind::AlreadyExists => {
-                            eprintln!("{PKG_NAME} cache path: {}", &path.to_str().unwrap_or("?"));
+                            eprintln!("{PKG_NAME} cache path: {}", path.to_str().unwrap_or("?"));
                         }
                         _ => {
                             eprintln!(
                                 "Error: couldn't create directory '{}': {e}",
-                                &path.to_str().unwrap_or("?")
+                                path.to_str().unwrap_or("?")
                             );
                             std::process::exit(1);
                         }

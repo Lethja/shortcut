@@ -330,7 +330,7 @@ fn check_or_create_tls() -> (RootCertificate, PathBuf, PathBuf) {
                         _ => {
                             eprintln!(
                                 "Error: couldn't create directory '{}': {e}",
-                                &path.to_str().unwrap_or("?")
+                                path.to_str().unwrap_or("?")
                             );
                             std::process::exit(1);
                         }
