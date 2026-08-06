@@ -25,7 +25,7 @@ optional = true
 [dependencies.rcgen]
 default-features = false
 optional = true
-version = "0.13"
+version = "0.14"
 features = ["crypto", "pem", "ring", "x509-parser"]
 
 [dependencies.rustls]
