@@ -66,7 +66,17 @@ where
     redirects.push_back(fetch_request.uri().uri.clone());
 
     loop {
-        let uri = redirects.back().unwrap();
+        let uri = match redirects.back() {
+            Some(uri) => uri,
+            None => {
+                return respond_with(
+                    Close,
+                    HttpResponseStatus::INTERNAL_SERVER_ERROR,
+                    &mut stream,
+                )
+                .await
+            }
+        };
 
         let mut fetch_stream = match fetch_request.as_stream() {
             None => {

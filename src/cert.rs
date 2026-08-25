@@ -415,8 +415,21 @@ fn check_or_create_tls() -> (RootCertificate, PathBuf, PathBuf) {
     ];
     param.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
 
-    let signing_key = KeyPair::generate().unwrap();
-    let cert = param.self_signed(&signing_key).unwrap();
+    let signing_key = match KeyPair::generate() {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+
+    let cert = match param.self_signed(&signing_key) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
 
     let cert_der = cert.der().clone();
     let cert_pem = cert.pem();

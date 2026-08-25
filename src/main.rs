@@ -88,7 +88,14 @@ async fn main() {
 
     let http_listener = match TcpListener::bind(&http_bind).await {
         Ok(l) => {
-            let details = l.local_addr().unwrap();
+            let details = match l.local_addr() {
+                Ok(addr) => addr,
+                Err(e) => {
+                    eprintln!("Error: unable to bind '{http_bind}' {e}");
+                    return;
+                }
+            };
+
             let address = match details.ip().is_unspecified() {
                 true => "Any".to_string(),
                 false => details.ip().to_string(),

@@ -435,7 +435,12 @@ impl FetchRequest<'_> {
                     let new = format!(
                         "{}{}{}",
                         compare.scheme.unwrap_or_default(),
-                        compare.host_and_port().unwrap(),
+                        match compare.host_and_port() {
+                            Some(s) => s,
+                            None => {
+                                return Err(InvalidUri);
+                            }
+                        },
                         new_path
                     );
                     self.uri = Uri::from(new);
