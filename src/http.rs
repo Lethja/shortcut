@@ -689,6 +689,7 @@ where
             Err(_) => return (false, false),
         };
 
+        /* TODO: consolidate to reusable function */
         match fetch {
             Ok(0) => {
                 break;
@@ -864,6 +865,7 @@ where
 
         let min = std::cmp::min(content_length as usize, BUFFER_SIZE);
 
+        /* TODO: consolidate to reusable function */
         match fetch_buf_reader.read_exact(&mut buffer[..min]).await {
             Ok(0) => {
                 break;
