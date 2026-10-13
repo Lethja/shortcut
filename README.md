@@ -37,7 +37,7 @@ export X_PROXY_CACHE_PATH="/tmp/shortcut"
 SET X_PROXY_CACHE_PATH="C:\Temp\Shortcut"
 shortcutd.exe
 ```
-### Listen Address
+### Listen to specific addresses
 Shortcut can optionally bind to a particular network address. 
 You can set this by defining the `X_PROXY_HTTP_LISTEN_ADDRESS` environment variable 
 to an address and port.

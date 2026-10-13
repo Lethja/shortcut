@@ -197,7 +197,7 @@ where
             version: HttpVersion::from(client_request_header.version.as_str()),
             headers: {
                 let mut headers = client_request_header.headers.clone();
-                headers.remove("Range"); /* Not cached so need to download from start */
+                headers.remove("Range"); /* Not cached, so need to download from start */
                 headers.insert("Host".to_string(), host); /* Host field is mandatory on HTTP 1.1 */
                 headers
             },
