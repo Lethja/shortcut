@@ -354,21 +354,18 @@ fn check_or_create_tls() -> (RootCertificate, PathBuf, PathBuf) {
     if cert_path.exists() && key_path.exists() {
         eprintln!("{PKG_NAME} https path '{}'", path.to_str().unwrap_or("?"));
 
-        let cert_pem = match std::fs::read_to_string(&cert_path) {
-            Ok(x) => x,
-            Err(e) => {
-                eprintln!("{e}");
-                std::process::exit(1);
+        fn read_or_die(path_buf: &PathBuf) -> String {
+            match std::fs::read_to_string(path_buf) {
+                Ok(x) => x,
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
             }
-        };
+        }
 
-        let signing_key_pem = match std::fs::read_to_string(&key_path) {
-            Ok(x) => x,
-            Err(e) => {
-                eprintln!("{e}");
-                std::process::exit(1);
-            }
-        };
+        let cert_pem = read_or_die(&cert_path);
+        let signing_key_pem = read_or_die(&key_path);
 
         let signing_key = match KeyPair::from_pem(signing_key_pem.as_str()) {
             Ok(x) => x,
